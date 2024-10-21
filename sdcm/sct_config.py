@@ -1231,6 +1231,14 @@ class SCTConfiguration(dict):
         dict(name="perf_gradual_throttle_steps", env="SCT_PERF_GRADUAL_THROTTLE_STEPS", type=dict,
              help="Used for gradual performance test. Define throttle for load step in ops. Example: {'read': ['100000', '150000'], 'mixed': ['300']}"),
 
+        # StorageUtilizationTest
+        dict(name="auto_scaling_action_type", env="SCT_AUTO_SCALING_ACTION_TYPE", type=str,
+             help="Perform specific tasks (scale_in,scale_out etc)"),
+        dict(name="diskusage_softlimit", env="SCT_DISKUSAGE_SOFTLIMIT", type=int,
+             help="Soft limit threshold, data will populate as 10% chunk until this limit reached."),
+        dict(name="diskusage_hardlimit", env="SCT_DISKUSAGE_HARDLIMIT", type=int,
+             help="Maximum limit for disk usage."),
+
         # RefreshTest
         dict(name="skip_download", env="SCT_SKIP_DOWNLOAD", type=boolean,
              help=""),
