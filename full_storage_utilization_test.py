@@ -1,3 +1,4 @@
+from datetime import datetime
 import time
 from sdcm.tester import ClusterTester
 from sdcm.utils.tablets.common import wait_for_tablets_balanced
@@ -30,24 +31,47 @@ class FullStorageUtilizationTest(ClusterTester):
         self.log.info("Wait for 2 mins for the stress command to start")
         time.sleep(self.sleep_time_before_autoscale)        
         
-    def scale_out(self):
+    def scale_out(self, dc_idx=0, instance_type=None):
+        if instance_type is None:
+            instance_type = self.params.get("instance_type_db")
         self.start_throttle_write()
         self.log.info("Adding a new node")
-        self.add_new_node()
+        self.add_new_node(dc_idx=dc_idx, instance_type=instance_type)
 
     def scale_in(self):        
         #self.start_throttle_write()
         self.log.info("Removing a node")
         self.remove_node()
 
-    def drop_data(self, keyspace_name):
+    def execute_cql(self, query):
+        node = self.db_cluster.nodes[0]
+        node.stop_scylla
+        with self.db_cluster.cql_connection_patient(node) as session:
+            results = session.execute(query)
+
+        return results
+    
+    def set_ttl_on_column(self, keyspace_name, table_name, column_name, ttl):
+        """
+        Set `default_time_to_live` on a column in a table of a given keyspace
+        """
+        cql = f"ALTER TABLE {keyspace_name}.{table_name} ALTER {column_name} with default_time_to_live={ttl};"
+        self.execute_cql(cql)
+    
+    def truncate_table(self, keyspace_name, table_name):
+        """
+        Truncate a table of a given keyspace
+        """
+        cql = f"TRUNCATE {keyspace_name}.{table_name};"
+        self.execute_cql(cql)
+
+    def drop_keyspace(self, keyspace_name):
         '''
         Drop keyspace and clear snapshots.
         '''
-        node = self.db_cluster.nodes[0]
         self.log.info("Dropping some data")
-        cql = f"DROP KEYSPACE {keyspace_name}"
-        node.run_cqlsh(cql)
+        cql = f"DROP KEYSPACE {keyspace_name};"
+        self.execute_cql(cql)
         #node.run_nodetool(f"clearsnapshot")
 
     def perform_action(self):        
@@ -63,8 +87,8 @@ class FullStorageUtilizationTest(ClusterTester):
            can accommodate data from the removed node.
            '''
            # Remove 20% of data from the cluster.
-           self.drop_data("keyspace_large1")
-           self.drop_data("keyspace_large2")
+           self.drop_keyspace("keyspace_large1")
+           self.drop_keyspace("keyspace_large2")
            self.scale_in()   
         self.log_disk_usage()     
 
@@ -79,6 +103,155 @@ class FullStorageUtilizationTest(ClusterTester):
         self.run_stress(self.hard_limit, sleep_time=self.sleep_time_fill_disk)
         self.perform_action()        
 
+    def test_data_removal_drop_compaction(self):
+        """
+        3 nodes cluster, RF=3.
+        Write data until 90% disk usage is reached.
+        Sleep for 60 minutes.
+        Drop some keyspaces and verify data space was reclaimed
+        """
+        self.run_stress(self.soft_limit, sleep_time=self.sleep_time_fill_disk)
+        self.run_stress(self.hard_limit, sleep_time=self.sleep_time_fill_disk)
+
+        one_hour = 60 * 60
+        ten_minutes = 10 * 60
+        start = datetime.now()
+        num = 0
+        free_before = self.cluster_free_space()
+        while (datetime.now() - start).seconds <= one_hour:
+            num += 1
+            self.drop_keyspace("keyspace_large{num}")
+            time.sleep(ten_minutes)
+
+        free_after = self.cluster_free_space()
+        self.log_disk_usage() 
+        assert free_after > free_before, "space was not freed after dropping keyspaces"
+
+    def test_data_removal_truncate_compaction(self):
+        """
+        3 nodes cluster, RF=3.
+        Write data until 90% disk usage is reached.
+        Sleep for 60 minutes.
+        Truncate some tables and verify data space was reclaimed
+        """
+        self.run_stress(self.soft_limit, sleep_time=self.sleep_time_fill_disk)
+        self.run_stress(self.hard_limit, sleep_time=self.sleep_time_fill_disk)
+
+        one_hour = 60 * 60
+        ten_minutes = 10 * 60
+        start = datetime.now()
+        num = 0
+        free_before = self.cluster_free_space()
+        while (datetime.now() - start).seconds <= one_hour:
+            num += 1
+            self.truncate_table("keyspace_large{num}", "standard1")
+            time.sleep(ten_minutes)
+
+        free_after = self.cluster_free_space()
+        self.log_disk_usage() 
+        assert free_after > free_before, "space was not freed after truncating tables"
+
+    def test_data_removal_ttl_compaction(self):
+        """
+        3 nodes cluster, RF=3.
+        Write data until 90% disk usage is reached.
+        Sleep for 60 minutes.
+        Create tables with ttl and verify data space was reclaimed after they expire
+        """
+        self.run_stress(self.soft_limit, sleep_time=self.sleep_time_fill_disk)
+        self.run_stress(self.hard_limit, sleep_time=self.sleep_time_fill_disk)
+
+        one_hour = 60 * 60
+        ten_minutes = 10 * 60
+        five_minutes = 5 * 60
+        start = datetime.now()
+        num = 0
+        free_before = self.cluster_free_space()
+        while (datetime.now() - start).seconds <= one_hour:
+            num += 1
+            self.set_ttl_on_column("keyspace_large{num}", "standard1", "c0", five_minutes)
+            time.sleep(ten_minutes)
+
+        free_after = self.cluster_free_space()
+        self.log_disk_usage() 
+        assert free_after > free_before, "space was not freed after columns expired due to ttl"
+
+    def test_replace_node(self):
+        """
+        3 nodes cluster, RF=3.
+        Write data until 90% disk usage is reached.
+        Sleep for 60 minutes.
+        Replace a node and verify any failure report
+        """
+        self.run_stress(self.soft_limit, sleep_time=self.sleep_time_fill_disk)
+        self.run_stress(self.hard_limit, sleep_time=self.sleep_time_fill_disk)
+
+        self.replace_node()
+
+    def test_replace_node(self):
+        """
+        3 nodes cluster, RF=3.
+        Write data until 90% disk usage is reached.
+        Sleep for 60 minutes.
+        Add a new in a new and verify any failure report
+        """
+        self.run_stress(self.soft_limit, sleep_time=self.sleep_time_fill_disk)
+        self.run_stress(self.hard_limit, sleep_time=self.sleep_time_fill_disk)
+
+        self.replace_node()
+
+    def test_add_smaller_instance(self):
+        """
+        3 nodes cluster, RF=3.
+        Write data until 90% disk usage is reached.
+        Sleep for 60 minutes.
+        Add a new node of a smaller instance type
+        Verify disk usage is less than 90%
+        """
+        self.run_stress(self.soft_limit, sleep_time=self.sleep_time_fill_disk)
+        self.run_stress(self.hard_limit, sleep_time=self.sleep_time_fill_disk)
+        # NOTE: There is no instance of type i4i smaller than large. 
+        # Maybe the test should 
+        free_before = self.cluster_free_space()
+        self.scale_out(instance_type='i4i.large')
+        free_after = self.cluster_free_space()
+        self.log_disk_usage() 
+        assert free_after > free_before, "Disk usage did not go down after adding a node"
+
+    def test_add_larger_instance(self):
+        """
+        3 nodes cluster, RF=3.
+        Write data until 90% disk usage is reached.
+        Sleep for 60 minutes.
+        Add a new node of a larger instance type
+        Verify disk usage is less than 90%
+        """
+        self.run_stress(self.soft_limit, sleep_time=self.sleep_time_fill_disk)
+        self.run_stress(self.hard_limit, sleep_time=self.sleep_time_fill_disk)
+
+        free_before = self.cluster_free_space()
+        self.scale_out(instance_type='i4i.2xlarge')
+        free_after = self.cluster_free_space()
+        self.log_disk_usage() 
+        assert free_after > free_before, "Disk usage did not go down after adding a node"
+
+    def test_multi_dc_scaleout(self):
+        """
+        3 nodes cluster, RF=3.
+        Write data until 90% disk usage is reached.
+        Sleep for 60 minutes.
+        Add a new node on a different dc
+        Verify disk usage is less than 90%
+        """
+        self.run_stress(self.soft_limit, sleep_time=self.sleep_time_fill_disk)
+        self.run_stress(self.hard_limit, sleep_time=self.sleep_time_fill_disk)
+
+        free_before = self.cluster_free_space()
+        self.scale_out(instance_type='i4i.2xlarge')
+        free_after = self.cluster_free_space()
+        self.log_disk_usage() 
+        assert free_after > free_before, "Disk usage did not go down after adding a node"
+    
     def run_stress(self, target_usage, sleep_time=600):
         target_used_size = self.calculate_target_used_size(target_usage)
         self.run_stress_until_target(target_used_size, target_usage)
@@ -118,8 +291,17 @@ class FullStorageUtilizationTest(ClusterTester):
             current_usage, current_used = self.get_max_disk_usage()
             self.log.info(f"Current max disk usage after writing to keyspace{num}: {current_usage}% ({current_used} GB / {target_used_size} GB)")
 
-    def add_new_node(self):
-        new_nodes = self.db_cluster.add_nodes(count=self.add_node_cnt, enable_auto_bootstrap=True)
+    def replace_node(self):
+        node_to_remove = self.db_cluster.nodes[-1]
+        new_nodes = self.db_cluster.add_nodes(count=1, enable_auto_bootstrap=True)
+        self.db_cluster.wait_for_init(node_list=new_nodes)
+        self.db_cluster.wait_for_nodes_up_and_normal(nodes=new_nodes)
+        self.db_cluster.decommission(node_to_remove)
+        self.monitors.reconfigure_scylla_monitoring()
+        wait_for_tablets_balanced(self.db_cluster.nodes[0])
+
+    def add_new_node(self, dc_idx, instance_type):
+        new_nodes = self.db_cluster.add_nodes(count=self.add_node_cnt, dc_idx=dc_idx, enable_auto_bootstrap=True, instance_type=instance_type)
         self.db_cluster.wait_for_init(node_list=new_nodes)
         self.db_cluster.wait_for_nodes_up_and_normal(nodes=new_nodes)
         total_nodes_in_cluster = len(self.db_cluster.nodes)
@@ -188,4 +370,10 @@ class FullStorageUtilizationTest(ClusterTester):
             self.log.info(f"  Available: {info['available']} GB")
             self.log.info(f"  Used %: {info['used_percent']}%")
 
-    
+    def cluster_free_space(self):
+        free = 0
+        for node in self.db_cluster.nodes:
+            info = self.get_disk_info(node)
+            free += info["available"]
+
+        return free
