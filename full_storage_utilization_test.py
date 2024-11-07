@@ -181,18 +181,6 @@ class FullStorageUtilizationTest(ClusterTester):
         3 nodes cluster, RF=3.
         Write data until 90% disk usage is reached.
         Sleep for 60 minutes.
-        Replace a node and verify any failure report
-        """
-        self.run_stress(self.soft_limit, sleep_time=self.sleep_time_fill_disk)
-        self.run_stress(self.hard_limit, sleep_time=self.sleep_time_fill_disk)
-
-        self.replace_node()
-
-    def test_replace_node(self):
-        """
-        3 nodes cluster, RF=3.
-        Write data until 90% disk usage is reached.
-        Sleep for 60 minutes.
         Add a new in a new and verify any failure report
         """
         self.run_stress(self.soft_limit, sleep_time=self.sleep_time_fill_disk)
