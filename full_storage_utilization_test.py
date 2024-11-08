@@ -1,5 +1,6 @@
 from datetime import datetime
 import time
+from sdcm.cluster import BaseNode
 from sdcm.tester import ClusterTester
 from sdcm.utils.tablets.common import wait_for_tablets_balanced
 
@@ -45,7 +46,7 @@ class FullStorageUtilizationTest(ClusterTester):
 
     def execute_cql(self, query):
         node = self.db_cluster.nodes[0]
-        node.stop_scylla
+        self.log.info(f"Executing {query}")
         with self.db_cluster.cql_connection_patient(node) as session:
             results = session.execute(query)
 
@@ -55,14 +56,14 @@ class FullStorageUtilizationTest(ClusterTester):
         """
         Set `default_time_to_live` on a column in a table of a given keyspace
         """
-        cql = f"ALTER TABLE {keyspace_name}.{table_name} ALTER {column_name} with default_time_to_live={ttl};"
+        cql = f"ALTER TABLE {keyspace_name}.{table_name} ALTER {column_name} with default_time_to_live = {ttl}"
         self.execute_cql(cql)
     
     def truncate_table(self, keyspace_name, table_name):
         """
         Truncate a table of a given keyspace
         """
-        cql = f"TRUNCATE {keyspace_name}.{table_name};"
+        cql = f"TRUNCATE {keyspace_name}.{table_name}"
         self.execute_cql(cql)
 
     def drop_keyspace(self, keyspace_name):
@@ -70,7 +71,7 @@ class FullStorageUtilizationTest(ClusterTester):
         Drop keyspace and clear snapshots.
         '''
         self.log.info("Dropping some data")
-        cql = f"DROP KEYSPACE {keyspace_name};"
+        cql = f"DROP KEYSPACE {keyspace_name}"
         self.execute_cql(cql)
         #node.run_nodetool(f"clearsnapshot")
 
@@ -277,7 +278,7 @@ class FullStorageUtilizationTest(ClusterTester):
             #time.sleep(60) if smaller_dataset else time.sleep(600)
 
             current_usage, current_used = self.get_max_disk_usage()
-            self.log.info(f"Current max disk usage after writing to keyspace{num}: {current_usage}% ({current_used} GB / {target_used_size} GB)")
+            self.log.info(f"Current max disk usage after writing to {ks_name}{num}: {current_usage}% ({current_used} GB / {target_used_size} GB)")
 
     def replace_node(self):
         node_to_remove = self.db_cluster.nodes[-1]
@@ -309,20 +310,19 @@ class FullStorageUtilizationTest(ClusterTester):
     def flush_all_nodes(self):
         for node in self.db_cluster.nodes:
             self.log.info(f"Flushing data on node {node.name}")
-            node.run_nodetool("flush")
+            node.run_nodetool("flush", timeout=600, retry=3)
 
     def get_max_disk_usage(self):
         max_usage = 0
         max_used = 0
         for node in self.db_cluster.nodes:
-            result = node.remoter.run("df -h --output=used,pcent /var/lib/scylla | sed 1d | sed 's/G//' | sed 's/%//'")
-            used, usage = result.stdout.strip().split()
-            max_usage = max(max_usage, int(usage))
-            max_used = max(max_used, int(used))
+            info = self.get_disk_info(node)
+            max_usage = max(max_usage, info["used_percent"])
+            max_used = max(max_used, info["used"])
         return max_usage, max_used
 
-    def get_disk_info(self, node):
-        result = node.remoter.run("df -h --output=size,used,avail,pcent /var/lib/scylla | sed 1d | sed 's/G//g' | sed 's/%//'")
+    def get_disk_info(self, node: BaseNode):
+        result = node.remoter.run("df -h --output=size,used,avail,pcent /var/lib/scylla | sed 1d | sed 's/G//g' | sed 's/%//'", timeout=60, retry=5)
         size, used, avail, pcent = result.stdout.strip().split()
         return {
             'total': int(size),
