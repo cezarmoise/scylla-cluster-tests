@@ -121,7 +121,7 @@ class FullStorageUtilizationTest(ClusterTester):
         free_before = self.cluster_free_space()
         while (datetime.now() - start).seconds <= one_hour:
             num += 1
-            self.drop_keyspace("keyspace_large{num}")
+            self.drop_keyspace(f"keyspace_large{num}")
             time.sleep(ten_minutes)
 
         free_after = self.cluster_free_space()
@@ -145,7 +145,7 @@ class FullStorageUtilizationTest(ClusterTester):
         free_before = self.cluster_free_space()
         while (datetime.now() - start).seconds <= one_hour:
             num += 1
-            self.truncate_table("keyspace_large{num}", "standard1")
+            self.truncate_table(f"keyspace_large{num}", "standard1")
             time.sleep(ten_minutes)
 
         free_after = self.cluster_free_space()
@@ -170,7 +170,7 @@ class FullStorageUtilizationTest(ClusterTester):
         free_before = self.cluster_free_space()
         while (datetime.now() - start).seconds <= one_hour:
             num += 1
-            self.set_ttl_on_column("keyspace_large{num}", "standard1", "c0", five_minutes)
+            self.set_ttl_on_column(f"keyspace_large{num}", "standard1", "c0", five_minutes)
             time.sleep(ten_minutes)
 
         free_after = self.cluster_free_space()
