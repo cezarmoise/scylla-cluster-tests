@@ -1236,6 +1236,8 @@ class SCTConfiguration(dict):
         # StorageUtilizationTest
         dict(name="scaling_action_type", env="SCT_SCALING_ACTION_TYPE", type=str,
              help="Refers to type of action (scale_in,scale_out etc) that needs to be performed when specific disk usage threshold is reached."),
+        dict(name="data_removal_action", env="SCT_DATA_REMOVAL_ACTION", type=str,
+             help="Refers to type of action (drop,truncate,expire) that will be performed to remove data from the cluster."),
         dict(name="diskusage_softlimit", env="SCT_DISKUSAGE_SOFTLIMIT", type=int,
              help="Soft limit threshold, data will populate as 10% chunk until this limit reached."),
         dict(name="diskusage_hardlimit", env="SCT_DISKUSAGE_HARDLIMIT", type=int,

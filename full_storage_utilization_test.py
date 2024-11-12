@@ -194,7 +194,7 @@ class FullStorageUtilizationTest(ClusterTester):
         return max_usage, max_used
 
     def get_disk_info(self, node):
-        result = node.remoter.run("df -h --output=size,used,avail,pcent /var/lib/scylla | sed 1d | sed 's/G//g' | sed 's/%//'")
+        result = node.remoter.run("df -h -BG --output=size,used,avail,pcent /var/lib/scylla | sed 1d | sed 's/G//g' | sed 's/%//'")
         size, used, avail, pcent = result.stdout.strip().split()
         return {
             'total': int(size),
