@@ -19,6 +19,8 @@ class FullStorageUtilizationTest(ClusterTester):
         self.stress_cmd_r = self.params.get('stress_cmd_r')
         self.add_node_cnt = self.params.get('add_node_cnt')
         self.scaling_action_type = self.params.get('scaling_action_type')
+        self.total_large_ks=0
+        self.total_small_ks=0
 
     def prepare_dataset_layout(self, dataset_size, row_size=10240):
         n = dataset_size * 1024 * 1024 * 1024 // row_size
@@ -137,21 +139,23 @@ class FullStorageUtilizationTest(ClusterTester):
 
     def run_stress_until_target(self, target_used_size, target_usage):
         current_usage, current_used = self.get_max_disk_usage()
-        num = 0
         smaller_dataset = False
         
         space_needed = target_used_size - current_used
         # Calculate chunk size as 10% of space needed
         chunk_size = int(space_needed * 0.1)
         while current_used < target_used_size and current_usage < target_usage:
-            num += 1
-            
             # Write smaller dataset near the threshold (15% or 30GB of the target)
             smaller_dataset = (((target_used_size - current_used) < 30) or ((target_usage - current_usage) <= 15))
+            if not smaller_dataset:
+                self.total_large_ks += 1
+            else:
+                self.total_small_ks += 1
 
             # Use 1GB chunks near threshold, otherwise use 10% of remaining space
             dataset_size = 1 if smaller_dataset else chunk_size
             ks_name = "keyspace_small" if smaller_dataset else "keyspace_large"
+            num = self.total_small_ks if smaller_dataset else self.total_large_ks
             self.log.info(f"Writing chunk of size: {dataset_size} GB")
             stress_cmd = self.prepare_dataset_layout(dataset_size)
             stress_queue = self.run_stress_thread(stress_cmd=stress_cmd, keyspace_name=f"{ks_name}{num}", stress_num=1, keyspace_num=num)
@@ -187,10 +191,9 @@ class FullStorageUtilizationTest(ClusterTester):
         max_usage = 0
         max_used = 0
         for node in self.db_cluster.nodes:
-            result = node.remoter.run("df -h --output=used,pcent /var/lib/scylla | sed 1d | sed 's/G//' | sed 's/%//'")
-            used, usage = result.stdout.strip().split()
-            max_usage = max(max_usage, int(usage))
-            max_used = max(max_used, int(used))
+            info = self.get_disk_info(node)
+            max_usage = max(max_usage, info["used_percent"])
+            max_used = max(max_used, info["used"])
         return max_usage, max_used
 
     def get_disk_info(self, node):
