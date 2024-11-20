@@ -12,7 +12,7 @@ class FullStorageUtilizationTest2(FullStorageUtilizationTest):
         super().__init__(*args, **kwargs)
         self.data_removal_action = self.params.get('data_removal_action')
         self.scale_out_instance_type = self.params.get('scale_out_instance_type')
-        self.scale_out_dc_idx = int(self.params.get("scale_out_dc_idx")) or 0
+        self.scale_out_dc_idx = self.params.get("scale_out_dc_idx")
         self.keyspaces = []
 
     def get_total_free_space(self):
