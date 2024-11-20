@@ -109,7 +109,7 @@ class FullStorageUtilizationTest2(FullStorageUtilizationTest):
             # Use 1GB chunks near threshold, otherwise use 10% of remaining space
             num = len(self.keyspaces) + 1
             dataset_size = 1 if smaller_dataset else chunk_size
-            ks_name = f"keyspace_{"small" if smaller_dataset else "large"}{num}"
+            ks_name = f"keyspace_{'small' if smaller_dataset else 'large'}{num}"
             self.log.info(f"Writing chunk of size: {dataset_size} GB")
             stress_cmd = self.prepare_dataset_layout(dataset_size)
             if self.data_removal_action == "expire":
