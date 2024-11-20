@@ -93,7 +93,7 @@ class FullStorageUtilizationTest2(FullStorageUtilizationTest):
     def create_ks_with_ttl(self, keyspace: str):
         ttl = random.randint(4, 12) * 3600
         self.execute_cql(f"""CREATE KEYSPACE {keyspace} 
-                         WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 3}
+                         WITH replication = {{'class': 'NetworkTopologyStrategy', 'replication_factor': 3}}
                          AND default_time_to_live = {ttl};""")
 
     def run_stress_until_target(self, target_used_size, target_usage):
