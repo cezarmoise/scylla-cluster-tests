@@ -1,7 +1,10 @@
+import random
 import time
 
 from full_storage_utilization_test import FullStorageUtilizationTest
+from sdcm.cluster import BaseNode
 from sdcm.utils.tablets.common import wait_for_tablets_balanced
+from sdcm.utils.replication_strategy_utils import NetworkTopologyReplicationStrategy
 
 
 class FullStorageUtilizationTest2(FullStorageUtilizationTest):
@@ -9,7 +12,8 @@ class FullStorageUtilizationTest2(FullStorageUtilizationTest):
         super().__init__(*args, **kwargs)
         self.data_removal_action = self.params.get('data_removal_action')
         self.scale_out_instance_type = self.params.get('scale_out_instance_type')
-        self.scale_out_dc_idx = self.params.get("scale_out_dc_idx")
+        self.scale_out_dc_idx = int(self.params.get("scale_out_dc_idx")) or 0
+        self.keyspaces = []
 
     def get_total_free_space(self):
         free = 0
@@ -19,7 +23,7 @@ class FullStorageUtilizationTest2(FullStorageUtilizationTest):
 
         return free
 
-    def get_keyspaces(self, prefix):
+    def get_keyspaces(self, prefix: str):
         rows = self.execute_cql(f"SELECT keyspace_name FROM system_schema.keyspaces")
         return [row.keyspace_name for row in rows if row.keyspace_name.startswith(prefix)]
     
@@ -31,18 +35,18 @@ class FullStorageUtilizationTest2(FullStorageUtilizationTest):
 
         return results
     
-    def remove_data_from_cluster(self, keyspace):
+    def remove_data_from_cluster(self, keyspace: str):
         table = "standard1"
         match self.data_removal_action:
             case "drop":
-                query = f"DROP TABLE {keyspace}.{table}"
+                self.execute_cql(f"DROP TABLE {keyspace}.{table}")
             case "truncate":
-                query = f"TRUNCATE TABLE {keyspace}.{table}"
+                self.execute_cql(f"TRUNCATE TABLE {keyspace}.{table}")
             case "expire":
-                query = f"ALTER TABLE {keyspace}.{table} WITH default_time_to_live = 300 AND gc_grace_seconds = 300"
+                self.log.info(f"Sleep 1h to let data expire")
+                time.sleep(3600)
             case _:
                 raise ValueError(f"data_removal_action={self.data_removal_action} is not supported!")
-        self.execute_cql(query)
 
     def scale_out(self):
         self.start_throttle_rw()
@@ -58,8 +62,68 @@ class FullStorageUtilizationTest2(FullStorageUtilizationTest):
         self.db_cluster.wait_for_nodes_up_and_normal(nodes=new_nodes)
         total_nodes_in_cluster = len(self.db_cluster.nodes)
         self.log.info(f"New node added, total nodes in cluster: {total_nodes_in_cluster}")
+        if self.scale_out_dc_idx not in [0, None]:
+            self.extend_to_new_dc(new_nodes)
         self.monitors.reconfigure_scylla_monitoring()
         wait_for_tablets_balanced(self.db_cluster.nodes[0])
+
+    def extend_to_new_dc(self, new_nodes: list[BaseNode]):
+        # reconfigure system keyspaces to use NetworkTopologyStrategy
+        status = self.db_cluster.get_nodetool_status()
+        self.reconfigure_keyspaces_to_use_network_topology_strategy(
+            keyspaces=["system_distributed", "system_traces"],
+            replication_factors={dc: len(status[dc].keys()) for dc in status}
+        )
+
+        self.log.info("Running repair on new nodes")
+        for node in new_nodes:
+            node.run_nodetool(sub_cmd=f"rebuild -- {list(status.keys())[0]}", publish_event=True)
+
+        self.log.info("Running repair on all nodes")
+        for node in self.db_cluster.nodes:
+            node.run_nodetool(sub_cmd="repair -pr", publish_event=True)
+
+    def reconfigure_keyspaces_to_use_network_topology_strategy(self, keyspaces: list[str], replication_factors: dict[str, int]) -> None:
+        self.log.info("Reconfiguring keyspace Replication Strategy")
+        for keyspace in keyspaces:
+            cql = f"ALTER KEYSPACE {keyspace} WITH replication = {NetworkTopologyReplicationStrategy(**replication_factors)}"
+            self.execute_cql(cql)
+        self.log.info("Replication Strategies for {} reconfigured".format(keyspaces))
+
+    def create_ks_with_ttl(self, keyspace: str):
+        ttl = random.randint(4, 12) * 3600
+        self.execute_cql(f"""CREATE KEYSPACE {keyspace} 
+                         WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 3}
+                         AND default_time_to_live = {ttl};""")
+
+    def run_stress_until_target(self, target_used_size, target_usage):
+        current_usage, current_used = self.get_max_disk_usage()
+        
+        space_needed = target_used_size - current_used
+        # Calculate chunk size as 10% of space needed
+        chunk_size = int(space_needed * 0.1)
+        while current_used < target_used_size and current_usage < target_usage:
+            # Write smaller dataset near the threshold (15% or 30GB of the target)
+            smaller_dataset = (((target_used_size - current_used) < 30) or ((target_usage - current_usage) <= 15))
+
+            # Use 1GB chunks near threshold, otherwise use 10% of remaining space
+            num = len(self.keyspaces) + 1
+            dataset_size = 1 if smaller_dataset else chunk_size
+            ks_name = f"keyspace_{"small" if smaller_dataset else "large"}{num}"
+            self.log.info(f"Writing chunk of size: {dataset_size} GB")
+            stress_cmd = self.prepare_dataset_layout(dataset_size)
+            if self.data_removal_action == "expire":
+                self.create_ks_with_ttl(ks_name)
+            stress_queue = self.run_stress_thread(stress_cmd=stress_cmd, keyspace_name=f"{ks_name}", stress_num=1, keyspace_num=num)
+
+            self.verify_stress_thread(cs_thread_pool=stress_queue)
+            self.get_stress_results(queue=stress_queue)
+
+            self.db_cluster.flush_all_nodes()
+            #time.sleep(60) if smaller_dataset else time.sleep(600)
+
+            current_usage, current_used = self.get_max_disk_usage()
+            self.log.info(f"Current max disk usage after writing to {ks_name}: {current_usage}% ({current_used} GB / {target_used_size} GB)")
 
     def log_disk_usage(self):
         # Headers
@@ -110,7 +174,6 @@ class FullStorageUtilizationTest2(FullStorageUtilizationTest):
 
         # sleep to let compaction happen
         time.sleep(1800)
-        
         self.log_disk_usage() 
 
         free_after = self.get_total_free_space()
@@ -125,8 +188,6 @@ class FullStorageUtilizationTest2(FullStorageUtilizationTest):
         """
         self.run_stress(self.softlimit, sleep_time=self.sleep_time_fill_disk)
         self.run_stress(self.hardlimit, sleep_time=self.sleep_time_fill_disk)
-
-        self.log_disk_usage() 
 
         self.scale_out()
         self.log_disk_usage() 
