@@ -68,10 +68,14 @@ class FullStorageUtilizationTest2(FullStorageUtilizationTest):
         wait_for_tablets_balanced(self.db_cluster.nodes[0])
 
     def extend_to_new_dc(self, new_nodes: list[BaseNode]):
-        # reconfigure system keyspaces to use NetworkTopologyStrategy
         status = self.db_cluster.get_nodetool_status()
+        system_keyspaces = ["system_distributed", "system_traces"]
+        # auth-v2 is used when consistent topology is enabled
+        if not self.db_cluster.nodes[0].raft.is_consistent_topology_changes_enabled:
+            system_keyspaces.insert(0, "system_auth")
+        # reconfigure keyspaces to use NetworkTopologyStrategy
         self.reconfigure_keyspaces_to_use_network_topology_strategy(
-            keyspaces=["system_distributed", "system_traces"],
+            keyspaces=system_keyspaces + self.keyspaces,
             replication_factors={dc: len(status[dc].keys()) for dc in status}
         )
 
