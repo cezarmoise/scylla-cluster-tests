@@ -103,17 +103,17 @@ class FullStorageUtilizationTest2(FullStorageUtilizationTest):
     def run_stress_until_target(self, target_used_size, target_usage):
         current_usage, current_used = self.get_max_disk_usage()
         
-        space_needed = target_used_size - current_used
-        # Calculate chunk size as 10% of space needed
-        chunk_size = int(space_needed * 0.1)
+        big_chunk = int((target_used_size - current_used) * 0.1)
         while current_used < target_used_size and current_usage < target_usage:
             # Write smaller dataset near the threshold (15% or 30GB of the target)
             smaller_dataset = (((target_used_size - current_used) < 30) or ((target_usage - current_usage) <= 15))
 
-            # Use 1GB chunks near threshold, otherwise use 10% of remaining space
+            # Use smaller chunks (half the remaining space) near threshold, otherwise use 10% of remaining space
+            small_chunk = min(int((target_used_size - current_used) / 2), 1)
+            dataset_size = small_chunk if smaller_dataset else big_chunk
             num = len(self.keyspaces) + 1
-            dataset_size = 1 if smaller_dataset else chunk_size
             ks_name = f"keyspace_{'small' if smaller_dataset else 'large'}{num}"
+            self.keyspaces.append(ks_name)
             self.log.info(f"Writing chunk of size: {dataset_size} GB")
             stress_cmd = self.prepare_dataset_layout(dataset_size)
             if self.data_removal_action == "expire":
@@ -124,7 +124,6 @@ class FullStorageUtilizationTest2(FullStorageUtilizationTest):
             self.get_stress_results(queue=stress_queue)
 
             self.db_cluster.flush_all_nodes()
-            #time.sleep(60) if smaller_dataset else time.sleep(600)
 
             current_usage, current_used = self.get_max_disk_usage()
             self.log.info(f"Current max disk usage after writing to {ks_name}: {current_usage}% ({current_used} GB / {target_used_size} GB)")
