@@ -1,7 +1,9 @@
 import random
 import time
 
+from argus.client.generic_result import Status
 from full_storage_utilization_test import FullStorageUtilizationTest
+from sdcm.argus_results import DiskUsageResult, submit_results_to_argus
 from sdcm.cluster import BaseNode
 from sdcm.utils.tablets.common import wait_for_tablets_balanced
 from sdcm.utils.replication_strategy_utils import NetworkTopologyReplicationStrategy
@@ -128,32 +130,69 @@ class FullStorageUtilizationTest2(FullStorageUtilizationTest):
             current_usage, current_used = self.get_max_disk_usage()
             self.log.info(f"Current max disk usage after writing to {ks_name}: {current_usage}% ({current_used} GB / {target_used_size} GB)")
 
+    def get_disk_usage_data(self):
+        """Returns disk usage data for all nodes and cluster totals"""
+        data = {}
+        total = 0
+        used = 0 
+        available = 0
+        usage_percents = []
+
+        for idx, node in enumerate(self.db_cluster.nodes, 1):
+            info = self.get_disk_info(node)
+            data[f"node_{idx}"] = {
+                'Total': info['total'],
+                'Used': info['used'],
+                'Available': info['available'],
+                'Usage %': info['used_percent']
+            }
+            
+            total += info['total']
+            used += info['used']
+            available += info['available']
+            usage_percents.append(info['used_percent'])
+
+        data["cluster"] = {
+            'Total': total,
+            'Used': used,
+            'Available': available,
+            'Usage %': sum(usage_percents) / len(usage_percents)
+        }
+
+        return data
+
     def log_disk_usage(self):
-        # Headers
+        data = self.get_disk_usage_data()
+        
         headers = f"{'Node':<8} {'Total GB':<12} {'Used GB':<12} {'Avail GB':<12} {'Used %':<8}"
         self.log.info(headers)
 
-        # Track totals
-        total_gb = 0
-        total_used = 0
-        total_avail = 0
-        used_percents = []
+        for idx in range(1, len(self.db_cluster.nodes) + 1):
+            node_data = data[f"node_{idx}"]
+            row = f"{idx:<8} {node_data['Total']:<12} {node_data['Used']:<12} {node_data['Available']:<12} {node_data['Usage %']:.1f}%"
+            self.log.info(row)
 
-        # Node rows
-        for idx, node in enumerate(self.db_cluster.nodes, 1):
-            info = self.get_disk_info(node)
-            data = f"{idx:<8} {info['total']:<12} {info['used']:<12} {info['available']:<12} {info['used_percent']:.1f}%"
-            self.log.info(data)
-            
-            total_gb += info['total']
-            total_used += info['used']
-            total_avail += info['available']
-            used_percents.append(info['used_percent'])
-
-        # Cluster row
-        avg_used_percent = sum(used_percents) / len(used_percents)
-        total = f"Cluster  {total_gb:<12} {total_used:<12} {total_avail:<12} {avg_used_percent:.1f}%"
+        cluster_data = data["cluster"]
+        total = f"{'Cluster':<8} {cluster_data['Total']:<12} {cluster_data['Used']:<12} {cluster_data['Available']:<12} {cluster_data['Usage %']:.1f}%"
         self.log.info(total)
+
+    def disk_usage_to_argus(self, label: str):
+        data = self.get_disk_usage_data()
+        
+        for idx in range(1, len(self.db_cluster.nodes) + 1):
+            node_data = data[f"node_{idx}"]
+            row = f"{f'Node {idx}':<8} [{label}]"
+            self.report_to_argus(node_data, row)
+
+        row = f"{'Cluster':<8} [{label}]"
+        self.report_to_argus(data["cluster"], row)
+
+    def report_to_argus(self, data: dict, row: str):
+        argus_client = self.test_config.argus_client()
+        data_table = DiskUsageResult()
+        for key, value in data.items():
+            data_table.add_result(column=key, row=row, value=value, status=Status.UNSET)
+        submit_results_to_argus(argus_client, data_table)
 
     def test_data_removal_compaction(self):
         """
@@ -164,6 +203,7 @@ class FullStorageUtilizationTest2(FullStorageUtilizationTest):
         """
         self.run_stress(self.softlimit, sleep_time=self.sleep_time_fill_disk)
         self.run_stress(self.hardlimit, sleep_time=self.sleep_time_fill_disk)
+        self.disk_usage_to_argus(label="After data insertion")
 
         free_before = self.get_total_free_space()
 
@@ -178,6 +218,7 @@ class FullStorageUtilizationTest2(FullStorageUtilizationTest):
         # sleep to let compaction happen
         time.sleep(1800)
         self.log_disk_usage() 
+        self.disk_usage_to_argus(label="After data removal")
 
         free_after = self.get_total_free_space()
         assert free_after > free_before, "space was not freed after dropping data"

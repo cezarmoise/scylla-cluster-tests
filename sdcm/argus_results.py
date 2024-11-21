@@ -112,6 +112,17 @@ class ManagerRestoreBanchmarkResult(GenericResultTable):
             "total": ValidationRule(best_pct=10)
         }
 
+class DiskUsageResult(GenericResultTable):
+    class Meta:
+        name = "Disk Usage"
+        description = "The disk usage of each instance in the cluster"
+        Columns = [
+            ColumnMetadata(name="Total", unit="GB", type=ResultType.FLOAT, higher_is_better=False),
+            ColumnMetadata(name="Used", unit="GB", type=ResultType.FLOAT, higher_is_better=False),
+            ColumnMetadata(name="Available", unit="GB", type=ResultType.FLOAT, higher_is_better=False),
+            ColumnMetadata(name="Usage %", unit="", type=ResultType.FLOAT, higher_is_better=False),
+        ]
+
 
 workload_to_table = {
     "mixed": LatencyCalculatorMixedResult,
