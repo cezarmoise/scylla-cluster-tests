@@ -1,9 +1,9 @@
-test_duration: 3600
+test_duration: 7200  # make sure this is not overwritten by Jenkins parameter `timeout`
 n_db_nodes: 4 0
 n_loaders: 1
 n_monitor_nodes: 1
 user_prefix: 'storage-utilization'
-region_name: 'eu-west-1 eu-west-2'
+region_name: 'eu-west-1 eu-west-2'  # make sure this is not overwritten by Jenkins parameter `region`
 instance_type_db: 'i4i.large'
 instance_provision: 'spot'
 
