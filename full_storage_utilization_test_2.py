@@ -102,7 +102,7 @@ class FullStorageUtilizationTest2(FullStorageUtilizationTest):
         self.log.info("Replication Strategies for {} reconfigured".format(keyspaces))
 
     def create_ks_with_ttl(self, keyspace: str):
-        ttl = random.randint(4, 12) * 3600
+        ttl = 4 * 3600
         self.execute_cql(f"""CREATE KEYSPACE {keyspace} 
                          WITH replication = {{'class': 'NetworkTopologyStrategy', 'replication_factor': 3}}
                          AND default_time_to_live = {ttl};""")
