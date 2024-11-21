@@ -57,22 +57,27 @@ class FullStorageUtilizationTest2(FullStorageUtilizationTest):
         self.log.info(f"Adding a node finished with time: {duration}")
 
     def add_new_node(self):
+        status = self.db_cluster.get_nodetool_status()
+        system_keyspaces = ["system_distributed", "system_traces"]
+        # auth-v2 is used when consistent topology is enabled
+        if not self.db_cluster.nodes[0].raft.is_consistent_topology_changes_enabled:
+            system_keyspaces.insert(0, "system_auth")
+        self.reconfigure_keyspaces_to_use_network_topology_strategy(
+            keyspaces=system_keyspaces,
+            replication_factors={dc: len(status[dc].keys()) for dc in status}
+        )
         new_nodes = self.db_cluster.add_nodes(count=self.add_node_cnt, enable_auto_bootstrap=True, dc_idx=self.scale_out_dc_idx, instance_type=self.scale_out_instance_type)
         self.db_cluster.wait_for_init(node_list=new_nodes)
         self.db_cluster.wait_for_nodes_up_and_normal(nodes=new_nodes)
         total_nodes_in_cluster = len(self.db_cluster.nodes)
         self.log.info(f"New node added, total nodes in cluster: {total_nodes_in_cluster}")
         if self.scale_out_dc_idx not in [0, None]:
-            self.extend_to_new_dc(new_nodes)
+            self.extend_to_new_dc(new_nodes, system_keyspaces)
         self.monitors.reconfigure_scylla_monitoring()
         wait_for_tablets_balanced(self.db_cluster.nodes[0])
 
-    def extend_to_new_dc(self, new_nodes: list[BaseNode]):
+    def extend_to_new_dc(self, new_nodes: list[BaseNode], system_keyspaces: list[str]):
         status = self.db_cluster.get_nodetool_status()
-        system_keyspaces = ["system_distributed", "system_traces"]
-        # auth-v2 is used when consistent topology is enabled
-        if not self.db_cluster.nodes[0].raft.is_consistent_topology_changes_enabled:
-            system_keyspaces.insert(0, "system_auth")
         # reconfigure keyspaces to use NetworkTopologyStrategy
         self.reconfigure_keyspaces_to_use_network_topology_strategy(
             keyspaces=system_keyspaces + self.keyspaces,
