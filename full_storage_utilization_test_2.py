@@ -1,4 +1,3 @@
-import random
 import time
 
 from argus.client.generic_result import Status
@@ -101,11 +100,26 @@ class FullStorageUtilizationTest2(FullStorageUtilizationTest):
             self.execute_cql(cql)
         self.log.info("Replication Strategies for {} reconfigured".format(keyspaces))
 
-    def create_ks_with_ttl(self, keyspace: str):
-        ttl = 4 * 3600
-        self.execute_cql(f"""CREATE KEYSPACE {keyspace} 
-                         WITH replication = {{'class': 'NetworkTopologyStrategy', 'replication_factor': 3}}
-                         AND default_time_to_live = {ttl};""")
+    def alter_table_with_ttl(self, keyspace: str, table: str = "standard1"):
+        ttl = 4 * 3600 # 4 hours
+        self.execute_cql(f"ALTER TABLE {keyspace}.{table} WITH default_time_to_live = {ttl} AND gc_grace_seconds = 300")
+
+    def run_stress_queue(self, dataset_size: int, ks_name: str, ks_num: int):
+        stress_cmd = self.prepare_dataset_layout(dataset_size)
+        stress_queue = self.run_stress_thread(stress_cmd=stress_cmd, keyspace_name=ks_name, stress_num=1, keyspace_num=ks_num)
+        self.verify_stress_thread(cs_thread_pool=stress_queue)
+        self.get_stress_results(queue=stress_queue)
+
+    def insert_data(self, dataset_size: int, ks_name: str, ks_num: int):
+        if self.data_removal_action == "expire":
+            # write half the data, then alter the table with a TTL
+            first_half = dataset_size // 2
+            if first_half != 0:
+                dataset_size -= first_half
+                self.run_stress_queue(first_half, ks_name, ks_num)
+                self.alter_table_with_ttl(ks_name)
+
+        self.run_stress_queue(dataset_size, ks_name, ks_num)
 
     def run_stress_until_target(self, target_used_size, target_usage):
         current_usage, current_used = self.get_max_disk_usage()
@@ -122,13 +136,7 @@ class FullStorageUtilizationTest2(FullStorageUtilizationTest):
             ks_name = f"keyspace_{'small' if smaller_dataset else 'large'}{num}"
             self.keyspaces.append(ks_name)
             self.log.info(f"Writing chunk of size: {dataset_size} GB")
-            stress_cmd = self.prepare_dataset_layout(dataset_size)
-            if self.data_removal_action == "expire":
-                self.create_ks_with_ttl(ks_name)
-            stress_queue = self.run_stress_thread(stress_cmd=stress_cmd, keyspace_name=f"{ks_name}", stress_num=1, keyspace_num=num)
-
-            self.verify_stress_thread(cs_thread_pool=stress_queue)
-            self.get_stress_results(queue=stress_queue)
+            self.insert_data(dataset_size, ks_name, num)
 
             self.db_cluster.flush_all_nodes()
 
@@ -186,10 +194,10 @@ class FullStorageUtilizationTest2(FullStorageUtilizationTest):
         
         for idx in range(1, len(self.db_cluster.nodes) + 1):
             node_data = data[f"node_{idx}"]
-            row = f"{f'Node {idx}':<8} [{label}]"
+            row = f"**{f'Node {idx}':<8}** *{label}*"
             self.report_to_argus(node_data, row)
 
-        row = f"{'Cluster':<8} [{label}]"
+        row = f"**{'Cluster':<8}** *{label}*"
         self.report_to_argus(data["cluster"], row)
 
     def report_to_argus(self, data: dict, row: str):
