@@ -194,10 +194,10 @@ class FullStorageUtilizationTest2(FullStorageUtilizationTest):
         
         for idx in range(1, len(self.db_cluster.nodes) + 1):
             node_data = data[f"node_{idx}"]
-            row = f"{f'Node {idx}':<8} [{label}]"
+            row = f"**{f'Node {idx}':<8}** *{label}*"
             self.report_to_argus(node_data, row)
 
-        row = f"{'Cluster':<8} [{label}]"
+        row = f"**{'Cluster':<8}** *{label}*"
         self.report_to_argus(data["cluster"], row)
 
     def report_to_argus(self, data: dict, row: str):
