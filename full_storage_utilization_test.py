@@ -3,9 +3,11 @@ import time
 from sdcm.tester import ClusterTester
 from sdcm.utils.tablets.common import wait_for_tablets_balanced
 
+
 class ScalingActionType(Enum):
     SCALE_OUT = "scale_out"
     SCALE_IN = "scale_in"
+
 
 class FullStorageUtilizationTest(ClusterTester):
     def __init__(self, *args, **kwargs):
@@ -19,17 +21,17 @@ class FullStorageUtilizationTest(ClusterTester):
         self.stress_cmd_r = self.params.get('stress_cmd_r')
         self.add_node_cnt = self.params.get('add_node_cnt')
         self.scaling_action_type = self.params.get('scaling_action_type')
-        self.total_large_ks=0
-        self.total_small_ks=0
+        self.total_large_ks = 0
+        self.total_small_ks = 0
 
     def prepare_dataset_layout(self, dataset_size, row_size=10240):
         n = dataset_size * 1024 * 1024 * 1024 // row_size
         seq_end = n * 100
         cores = self.db_cluster.nodes[0].cpu_cores
         if not cores:
-           self.num_stress_threads = 10
+            self.num_stress_threads = 10
         else:
-           self.num_stress_threads = int(cores) * 8
+            self.num_stress_threads = int(cores) * 8
 
         return f'cassandra-stress write cl=ONE n={n} -mode cql3 native -rate threads={self.num_stress_threads} -pop dist="uniform(1..{seq_end})" ' \
                f'-col "size=FIXED({row_size}) n=FIXED(1)" -schema "replication(strategy=NetworkTopologyStrategy,replication_factor=3)"'
@@ -56,7 +58,7 @@ class FullStorageUtilizationTest(ClusterTester):
     def start_throttle_rw(self):
         self.start_throttle_write()
         self.start_throttle_read()
-        
+
     def scale_out(self):
         self.start_throttle_rw()
         self.log.info("Started adding a new node")
@@ -65,7 +67,7 @@ class FullStorageUtilizationTest(ClusterTester):
         duration = time.time() - start_time
         self.log.info(f"Adding a node finished with time: {duration}")
 
-    def scale_in(self):        
+    def scale_in(self):
         self.start_throttle_rw()
         self.log.info("Started removing a node")
         start_time = time.time()
@@ -81,9 +83,9 @@ class FullStorageUtilizationTest(ClusterTester):
         self.log.info("Dropping some data")
         query = f"DROP KEYSPACE {keyspace_name}"
         with self.db_cluster.cql_connection_patient(node) as session:
-           session.execute(query)
-           #node.run_nodetool(f"clearsnapshot")
-        self.log_disk_usage()     
+            session.execute(query)
+            # node.run_nodetool(f"clearsnapshot")
+        self.log_disk_usage()
 
     def perform_scale_in(self):
         '''
@@ -94,29 +96,29 @@ class FullStorageUtilizationTest(ClusterTester):
         dropping data.
         '''
         if self.hardlimit == 90:
-           self.scale_out()           
-           '''
+            self.scale_out()
+            '''
            Before removing a node, we should make sure
            other nodes has enough space so that they
            can accommodate data from the removed node.
            '''
-           # Remove 20% of data from the cluster.
-           self.drop_data("keyspace_large1")
-           self.drop_data("keyspace_large2")
-           self.scale_in()
+            # Remove 20% of data from the cluster.
+            self.drop_data("keyspace_large1")
+            self.drop_data("keyspace_large2")
+            self.scale_in()
         elif self.hardlimit == 67:
-           self.scale_in()
+            self.scale_in()
 
     def perform_action(self):
         self.log_disk_usage()
         # Trigger specific action
         if self.scaling_action_type == ScalingActionType.SCALE_OUT.value:
-           self.scale_out()
+            self.scale_out()
         elif self.scaling_action_type == ScalingActionType.SCALE_IN.value:
-           self.perform_scale_in()
+            self.perform_scale_in()
         else:
-           self.log.info(f"Invalid ActionType {self.scaling_action_type}")
-        self.log_disk_usage()     
+            self.log.info(f"Invalid ActionType {self.scaling_action_type}")
+        self.log_disk_usage()
 
     def test_storage_utilization(self):
         """
@@ -126,7 +128,7 @@ class FullStorageUtilizationTest(ClusterTester):
         """
         self.run_stress(self.softlimit, sleep_time=self.sleep_time_fill_disk)
         self.run_stress(self.hardlimit, sleep_time=self.sleep_time_fill_disk)
-        self.perform_action()        
+        self.perform_action()
 
     def run_stress(self, target_usage, sleep_time=600):
         target_used_size = self.calculate_target_used_size(target_usage)
@@ -134,13 +136,13 @@ class FullStorageUtilizationTest(ClusterTester):
 
         self.log_disk_usage()
         self.log.info(f"Wait for {sleep_time} seconds")
-        time.sleep(sleep_time)  
+        time.sleep(sleep_time)
         self.log_disk_usage()
 
     def run_stress_until_target(self, target_used_size, target_usage):
         current_usage, current_used = self.get_max_disk_usage()
         smaller_dataset = False
-        
+
         space_needed = target_used_size - current_used
         # Calculate chunk size as 10% of space needed
         chunk_size = int(space_needed * 0.1)
@@ -158,7 +160,8 @@ class FullStorageUtilizationTest(ClusterTester):
             num = self.total_small_ks if smaller_dataset else self.total_large_ks
             self.log.info(f"Writing chunk of size: {dataset_size} GB")
             stress_cmd = self.prepare_dataset_layout(dataset_size)
-            stress_queue = self.run_stress_thread(stress_cmd=stress_cmd, keyspace_name=f"{ks_name}{num}", stress_num=1, keyspace_num=num)
+            stress_queue = self.run_stress_thread(
+                stress_cmd=stress_cmd, keyspace_name=f"{ks_name}{num}", stress_num=1, keyspace_num=num)
 
             self.verify_stress_thread(cs_thread_pool=stress_queue)
             self.get_stress_results(queue=stress_queue)
@@ -167,7 +170,8 @@ class FullStorageUtilizationTest(ClusterTester):
             #time.sleep(60) if smaller_dataset else time.sleep(600)
 
             current_usage, current_used = self.get_max_disk_usage()
-            self.log.info(f"Current max disk usage after writing to keyspace{num}: {current_usage}% ({current_used} GB / {target_used_size} GB)")
+            self.log.info(
+                f"Current max disk usage after writing to keyspace{num}: {current_usage}% ({current_used} GB / {target_used_size} GB)")
 
     def add_new_node(self):
         new_nodes = self.db_cluster.add_nodes(count=self.add_node_cnt, enable_auto_bootstrap=True)
@@ -177,8 +181,8 @@ class FullStorageUtilizationTest(ClusterTester):
         self.log.info(f"New node added, total nodes in cluster: {total_nodes_in_cluster}")
         self.monitors.reconfigure_scylla_monitoring()
         wait_for_tablets_balanced(self.db_cluster.nodes[0])
-        
-    def remove_node(self):  
+
+    def remove_node(self):
         self.log.info('Removing a second node from the cluster')
         node_to_remove = self.db_cluster.nodes[1]
         self.log.info(f"Node to be removed: {node_to_remove.name}")
@@ -186,7 +190,7 @@ class FullStorageUtilizationTest(ClusterTester):
         self.log.info(f"Node {node_to_remove.name} has been removed from the cluster")
         self.monitors.reconfigure_scylla_monitoring()
         wait_for_tablets_balanced(self.db_cluster.nodes[0])
-    
+
     def get_max_disk_usage(self):
         max_usage = 0
         max_used = 0
@@ -197,7 +201,8 @@ class FullStorageUtilizationTest(ClusterTester):
         return max_usage, max_used
 
     def get_disk_info(self, node):
-        result = node.remoter.run("df -h -BG --output=size,used,avail,pcent /var/lib/scylla | sed 1d | sed 's/G//g' | sed 's/%//'")
+        result = node.remoter.run(
+            "df -h -BG --output=size,used,avail,pcent /var/lib/scylla | sed 1d | sed 's/G//g' | sed 's/%//'")
         size, used, avail, pcent = result.stdout.strip().split()
         return {
             'total': int(size),
@@ -211,7 +216,7 @@ class FullStorageUtilizationTest(ClusterTester):
         for node in self.db_cluster.nodes:
             info = self.get_disk_info(node)
             max_total = max(max_total, info['total'])
-        
+
         target_used_size = (target_percent / 100) * max_total
         current_usage, current_used = self.get_max_disk_usage()
         additional_usage_needed = target_used_size - current_used
@@ -232,5 +237,3 @@ class FullStorageUtilizationTest(ClusterTester):
             self.log.info(f"  Used: {info['used']} GB")
             self.log.info(f"  Available: {info['available']} GB")
             self.log.info(f"  Used %: {info['used_percent']}%")
-
-    

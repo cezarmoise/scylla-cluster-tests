@@ -1,9 +1,9 @@
 test_duration: 3600
-n_db_nodes: 4
+n_db_nodes: 3
 n_loaders: 1
 n_monitor_nodes: 1
 user_prefix: 'storage-utilization'
-instance_type_db: 'i4i.xlarge'
+instance_type_db: 'i4i.4xlarge'
 instance_provision: 'spot'
 
 enterprise_disable_kms: true
@@ -17,6 +17,5 @@ append_scylla_yaml:
   enable_tablets: true
   auto_snapshot: false
 
-add_node_cnt: 3
+scale_out_n_nodes: 1
 scale_out_instance_type: 'i4i.large'
-scale_out_dc_idx: 0
