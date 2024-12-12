@@ -42,7 +42,7 @@ store_perf_results: true
 use_hdr_cs_histogram: true
 email_subject_postfix: 'elasticity test'
 nemesis_double_load_during_grow_shrink_duration: 0
-parallel_node_operations: false
+parallel_node_operations: true
 
 stress_image:
   cassandra-stress: 'scylladb/cassandra-stress:3.17.0'
