@@ -4339,7 +4339,33 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
         time.sleep(sleep_time_between_ops)
 
         # reconfigure keyspaces
-        # TODO
+        node = self.cluster.data_nodes[0]
+        system_keyspaces = ["system_distributed", "system_traces"]
+        if not node.raft.is_consistent_topology_changes_enabled:  # auth-v2 is used when consistent topology is enabled
+            system_keyspaces.insert(0, "system_auth")
+
+        datacenters = list(self.tester.db_cluster.get_nodetool_status().keys())
+        new_dc_list = [dc for dc in datacenters if dc.endswith("_nemesis_dc")]
+        assert new_dc_list, "new datacenter was not registered"
+        new_dc_name = new_dc_list[0]
+
+        for keyspace in system_keyspaces + self.cluster.get_test_keyspaces():
+            strategy = ReplicationStrategy.get(node, keyspace)
+            assert isinstance(
+                strategy, NetworkTopologyReplicationStrategy), "Should have been already switched to NetworkStrategy"
+            for rf in range(1, initial_dc_nodes+1):
+                strategy.replication_factors_per_dc.update({new_dc_name: rf})
+                strategy.apply(node, keyspace)
+
+        InfoEvent(message='execute rebuild on new datacenter').publish()
+        for new_node in nodes_on_new_dc:
+            with wait_for_log_lines(node=new_node, start_line_patterns=["rebuild.*started with keyspaces=", "Rebuild starts"],
+                                    end_line_patterns=["rebuild.*finished with keyspaces=", "Rebuild succeeded"],
+                                    start_timeout=60, end_timeout=600):
+                new_node.run_nodetool(sub_cmd=f"rebuild -- {datacenters[0]}", long_running=True, retry=0)
+        InfoEvent(message='Running full cluster repair on each data node').publish()
+        for cluster_node in self.cluster.data_nodes:
+            cluster_node.run_nodetool(sub_cmd="repair -pr", publish_event=True)
 
         # add nodes to each dc
         InfoEvent(message='Grow both DCs').publish()
