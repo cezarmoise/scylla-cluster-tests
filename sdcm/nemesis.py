@@ -4330,6 +4330,13 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
             self.steady_state_latency()
             self.has_steady_run = True
 
+        # Switch to NetworkTopologyReplicationStrategy using the existing DC
+        node = self.cluster.data_nodes[0]
+        system_keyspaces = ["system_distributed", "system_traces"]
+        if not node.raft.is_consistent_topology_changes_enabled:  # auth-v2 is used when consistent topology is enabled
+            system_keyspaces.insert(0, "system_auth")
+        self._switch_to_network_replication_strategy(self.cluster.get_test_keyspaces() + system_keyspaces)
+
         # create a new dc
         InfoEvent(message='New DC').publish()
         nodes_on_new_dc = []
@@ -4339,11 +4346,6 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
         time.sleep(sleep_time_between_ops)
 
         # reconfigure keyspaces
-        node = self.cluster.data_nodes[0]
-        system_keyspaces = ["system_distributed", "system_traces"]
-        if not node.raft.is_consistent_topology_changes_enabled:  # auth-v2 is used when consistent topology is enabled
-            system_keyspaces.insert(0, "system_auth")
-
         datacenters = list(self.tester.db_cluster.get_nodetool_status().keys())
         new_dc_list = [dc for dc in datacenters if dc.endswith("_nemesis_dc")]
         assert new_dc_list, "new datacenter was not registered"
