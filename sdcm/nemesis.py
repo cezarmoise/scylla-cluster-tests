@@ -2104,7 +2104,6 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
         # NOTE: 'self' is used by the 'scylla_versions' decorator
         return ''
 
-    @latency_calculator_decorator(legend="Drop Table")
     def disrupt_drop(self):
         keyspace_drop = 'ks_drop'
         table = 'standard1'
@@ -2115,7 +2114,14 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
         with self.cluster.cql_connection_patient(self.target_node, keyspace=keyspace_drop) as session:
             session.execute(f"DROP TABLE {table};")
 
-    @latency_calculator_decorator(legend="Truncate Table")
+    def disrupt_drop_perf(self):
+        sleep_time_between_ops = self.cluster.params.get('nemesis_sequence_sleep_between_ops')
+        if not self.has_steady_run and sleep_time_between_ops:
+            self.steady_state_latency()
+            self.has_steady_run = True
+
+        latency_calculator_decorator(legend="Drop Table")(self.disrupt_drop)()
+
     def disrupt_truncate(self):
         keyspace_truncate = 'ks_truncate'
         table = 'standard1'
@@ -2131,6 +2137,14 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
         self.target_node.run_cqlsh(
             cmd=f'TRUNCATE {keyspace_truncate}.{table}{truncate_cmd_timeout_suffix}',
             timeout=truncate_timeout)
+
+    def disrupt_truncate_perf(self):
+        sleep_time_between_ops = self.cluster.params.get('nemesis_sequence_sleep_between_ops')
+        if not self.has_steady_run and sleep_time_between_ops:
+            self.steady_state_latency()
+            self.has_steady_run = True
+
+        latency_calculator_decorator(legend="Truncate Table")(self.disrupt_truncate)()
 
     def disrupt_truncate_large_partition(self):
         """
@@ -5987,6 +6001,16 @@ class DropMonkey(Nemesis):
         self.disrupt_drop()
 
 
+class DropPerfMonkey(Nemesis):
+    disruptive = False
+    kubernetes = True
+    limited = True
+    free_tier_set = True
+
+    def disrupt(self):
+        self.disrupt_drop_perf()
+
+
 class TruncateMonkey(Nemesis):
     disruptive = False
     kubernetes = True
@@ -5995,6 +6019,16 @@ class TruncateMonkey(Nemesis):
 
     def disrupt(self):
         self.disrupt_truncate()
+
+
+class TruncatePerfMonkey(Nemesis):
+    disruptive = False
+    kubernetes = True
+    limited = True
+    free_tier_set = True
+
+    def disrupt(self):
+        self.disrupt_truncate_perf()
 
 
 class TruncateLargeParititionMonkey(Nemesis):
