@@ -886,6 +886,15 @@ class ClusterTester(db_stats.TestStatsMixin, unittest.TestCase):  # pylint: disa
             'kmip_hosts' in append_scylla_yaml
         )
 
+    @property
+    def is_kmip_server_needed(self):
+        append_scylla_yaml = self.params.get('append_scylla_yaml')
+        return append_scylla_yaml and 'kmip_hosts' in append_scylla_yaml
+
+    def start_kmip_server(self):
+        self.log.info("STARTING KMIP SERVER")
+        pass
+
     def prepare_kms_host(self) -> None:
         version_supports_kms = (self.params.is_enterprise and
                                 ComparableScyllaVersion(self.params.scylla_version) >= '2023.1.3')
@@ -976,6 +985,8 @@ class ClusterTester(db_stats.TestStatsMixin, unittest.TestCase):  # pylint: disa
             self.download_db_packages()
         if self.is_encrypt_keys_needed:
             self.download_encrypt_keys()
+            if self.is_kmip_server_needed:
+                self.start_kmip_server()
         self.prepare_kms_host()
 
         self.init_resources()
