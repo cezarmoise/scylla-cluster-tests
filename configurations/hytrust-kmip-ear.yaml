@@ -10,7 +10,7 @@ append_scylla_yaml:
     secret_key_file: '/etc/scylla/encrypt_conf/system_info_encryption_keyfile'
   kmip_hosts:
     kmip_test:
-      hosts: '52.21.171.245'
+      hosts: 'placeholder'
       certificate: '/etc/encrypt_conf/hytrust-kmip-scylla.pem'
       keyfile: '/etc/encrypt_conf/hytrust-kmip-scylla.pem'
       truststore: '/etc/encrypt_conf/hytrust-kmip-cacert.pem'
