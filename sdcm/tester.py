@@ -11,6 +11,7 @@
 #
 # Copyright (c) 2016 ScyllaDB
 # pylint: disable=too-many-lines
+import ctypes
 import shutil
 from collections import defaultdict
 from copy import deepcopy
@@ -21,6 +22,9 @@ import random
 import logging
 import os
 import re
+from socket import socket
+import ssl
+import tempfile
 import time
 import traceback
 import unittest
@@ -32,6 +36,8 @@ from functools import wraps, cache
 import threading
 import signal
 import json
+from kmip.services import auth
+from kmip.services.server.server import KmipServer
 
 import botocore
 import yaml
@@ -108,7 +114,7 @@ from sdcm.sct_events.grafana import start_posting_grafana_annotations
 from sdcm.stress_thread import CassandraStressThread, get_timeout_from_stress_cmd
 from sdcm.gemini_thread import GeminiStressThread
 from sdcm.utils.log_time_consistency import DbLogTimeConsistencyAnalyzer
-from sdcm.utils.net import get_my_ip, get_sct_runner_ip
+from sdcm.utils.net import get_my_ip, get_my_public_ip, get_sct_runner_ip
 from sdcm.utils.operations_thread import ThreadParams
 from sdcm.utils.replication_strategy_utils import LocalReplicationStrategy, NetworkTopologyReplicationStrategy
 from sdcm.utils.threads_and_processes_alive import gather_live_processes_and_dump_to_file, \
@@ -407,6 +413,9 @@ class ClusterTester(db_stats.TestStatsMixin, unittest.TestCase):  # pylint: disa
         self.bisect_ref_value = None
         self.bisect_result_value = None
         self.stress_cmd = self.params.get('stress_cmd')
+
+        self.kmip_temp_dir = None
+        self.kmip_server = None
 
     def _init_test_duration(self):
         self._stress_duration: int = self.params.get('stress_duration')
@@ -886,6 +895,102 @@ class ClusterTester(db_stats.TestStatsMixin, unittest.TestCase):  # pylint: disa
             'kmip_hosts' in append_scylla_yaml
         )
 
+    @property
+    def is_kmip_server_needed(self):
+        append_scylla_yaml = self.params.get('append_scylla_yaml')
+        return append_scylla_yaml and 'kmip_hosts' in append_scylla_yaml
+
+    class TLS13AuthenticationSuite(auth.TLS12AuthenticationSuite):
+        """
+        An authentication suite used to establish secure network connections.
+        Supports TLS 1.3. More importantly, works with gnutls-<recent>
+        """
+
+        def __init__(self, cipher_suites=None):
+            """
+            Create a TLS12AuthenticationSuite object.
+            Args:
+                cipher_suites (list): A list of strings representing the names of
+                    cipher suites to use. Overrides the default set of cipher
+                    suites. Optional, defaults to None.
+            """
+            super().__init__(cipher_suites)
+            self._protocol = ssl.PROTOCOL_TLS_SERVER
+
+    def start_kmip_server(self):
+        self.log.info("STARTING KMIP SERVER")
+        self.kmip_temp_dir = tempfile.TemporaryDirectory()
+        certs_dir = get_data_dir_path("encrypt_conf")
+        self.kmip_server = KmipServer(
+            hostname=get_my_public_ip(),
+            config_path=None,
+            certificate_path=os.path.join(certs_dir, "hytrust-kmip-scylla.pem"),
+            key_path=os.path.join(certs_dir, "hytrust-kmip-scylla.pem"),
+            ca_path=os.path.join(certs_dir, "hytrust-kmip-cacert.pem"),
+            auth_suite="TLS1.2",
+            database_path=os.path.join(self.kmip_temp_dir.name, "pykmip.db"),
+            log_path=os.path.join(self.kmip_temp_dir.name, "pykmip.log"),
+            enable_tls_client_auth=False,
+        )
+        self.kmip_server.auth_suite = self.TLS13AuthenticationSuite(self.kmip_server.auth_suite.ciphers)
+        # force port to zero -> select dynamically
+        self.kmip_server.config.settings["port"] = 0
+        self.kmip_server.start()
+        self.kmip_port = self.kmip_server._socket.getsockname()[1]
+        self.kmip_thread = threading.Thread(name="kmip server", target=self.kmip_serve)
+        self.kmip_thread.start()
+        self.log.info(f"{self.kmip_server}")
+
+    def kmip_serve(self):
+        assert self.kmip_server is not None
+
+        self.kmip_server._socket.listen(5)
+        self.kmip_server._logger.info("Starting connection service...")
+
+        try:
+            while self.kmip_server._is_serving:
+                try:
+                    connection, address = self.kmip_server._socket.accept()
+                except TimeoutError:
+                    # Setting the default socket timeout to break hung connections
+                    # will cause accept to periodically raise socket.timeout. This
+                    # is expected behavior, so ignore it and retry accept.
+                    pass
+                except OSError as e:
+                    self.kmip_server._logger.warning("Error detected while establishing new connection.")
+                    self.kmip_server._logger.exception(e)
+                except KeyboardInterrupt:
+                    self.kmip_server._is_serving = False
+                    break
+                except Exception as e:
+                    self.kmip_server._logger.warning("Error detected while establishing new connection.")
+                    self.kmip_server._logger.exception(e)
+                else:
+                    self.kmip_server._setup_connection_handler(connection, address)
+        except KeyboardInterrupt:
+            pass
+
+        self.kmip_server._logger.info("Stopping connection service.")
+
+    def kmip_stop(self):
+        if self.kmip_thread is not None:
+            self.log.info(self.kmip_thread)
+            ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_long(
+                self.kmip_thread.ident), ctypes.py_object(KeyboardInterrupt))
+            self.kmip_thread.join()
+            self.kmip_thread = None
+        if self.kmip_server is not None:
+            try:
+                self.kmip_server._socket.shutdown(socket.SHUT_RDWR)
+                self.kmip_server._socket.close()
+            except:
+                pass
+            self.kmip_server = None
+        if self.kmip_temp_dir is not None:
+            self.kmip_temp_dir.cleanup()
+            self.kmip_temp_dir = None
+        self.certs = None
+
     def prepare_kms_host(self) -> None:
         version_supports_kms = (self.params.is_enterprise and
                                 ComparableScyllaVersion(self.params.scylla_version) >= '2023.1.3')
@@ -976,6 +1081,8 @@ class ClusterTester(db_stats.TestStatsMixin, unittest.TestCase):  # pylint: disa
             self.download_db_packages()
         if self.is_encrypt_keys_needed:
             self.download_encrypt_keys()
+            if self.is_kmip_server_needed:
+                self.start_kmip_server()
         self.prepare_kms_host()
 
         self.init_resources()
@@ -3013,6 +3120,9 @@ class ClusterTester(db_stats.TestStatsMixin, unittest.TestCase):  # pylint: disa
         self.stop_event_analyzer()
         self.stop_resources()
         self.get_test_failures()
+
+        if self.is_kmip_server_needed:
+            self.kmip_stop()
 
         # NOTE: running on K8S we need to gather logs otherwise a lot of
         # debugging info is lost

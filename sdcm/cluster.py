@@ -124,7 +124,7 @@ from sdcm.utils.version_utils import (
     ComparableScyllaVersion,
     SCYLLA_VERSION_RE,
 )
-from sdcm.utils.net import get_my_ip
+from sdcm.utils.net import get_my_ip, get_my_public_ip
 from sdcm.utils.node import build_node_api_command
 from sdcm.wait import wait_for_log_lines
 from sdcm.sct_events import Severity
@@ -527,6 +527,7 @@ class BaseNode(AutoSshContainerMixin):  # pylint: disable=too-many-instance-attr
         if append_scylla_yaml := copy.deepcopy(self.parent_cluster.params.get('append_scylla_yaml')) or {}:
             if any(key in append_scylla_yaml for key in (
                     "system_key_directory", "system_info_encryption", "kmip_hosts")):
+                append_scylla_yaml['kmip_hosts']['kmip_test']['hosts'] = get_my_public_ip()
                 install_encryption_at_rest_files(self.remoter)
             for kms_host_name, kms_host_data in append_scylla_yaml.get("kms_hosts", {}).items():
                 if kms_host_data["aws_region"] == "auto":

@@ -55,3 +55,4 @@ PyGithub==2.1.1
 gimme-aws-creds==2.8.0
 confluent-kafka==2.5.3
 fastavro==1.9.7
+pykmip==0.10.0
