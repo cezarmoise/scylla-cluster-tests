@@ -114,7 +114,7 @@ from sdcm.sct_events.grafana import start_posting_grafana_annotations
 from sdcm.stress_thread import CassandraStressThread, get_timeout_from_stress_cmd
 from sdcm.gemini_thread import GeminiStressThread
 from sdcm.utils.log_time_consistency import DbLogTimeConsistencyAnalyzer
-from sdcm.utils.net import get_my_ip, get_my_public_ip, get_sct_runner_ip
+from sdcm.utils.net import get_my_ip, get_sct_runner_ip
 from sdcm.utils.operations_thread import ThreadParams
 from sdcm.utils.replication_strategy_utils import LocalReplicationStrategy, NetworkTopologyReplicationStrategy
 from sdcm.utils.threads_and_processes_alive import gather_live_processes_and_dump_to_file, \
@@ -416,6 +416,7 @@ class ClusterTester(db_stats.TestStatsMixin, unittest.TestCase):  # pylint: disa
 
         self.kmip_temp_dir = None
         self.kmip_server = None
+        self.kmip_thread = None
 
     def _init_test_duration(self):
         self._stress_duration: int = self.params.get('stress_duration')
@@ -922,7 +923,7 @@ class ClusterTester(db_stats.TestStatsMixin, unittest.TestCase):  # pylint: disa
         self.kmip_temp_dir = tempfile.TemporaryDirectory()
         certs_dir = get_data_dir_path("encrypt_conf")
         self.kmip_server = KmipServer(
-            hostname=get_my_public_ip(),
+            hostname="127.0.0.1",
             config_path=None,
             certificate_path=os.path.join(certs_dir, "hytrust-kmip-scylla.pem"),
             key_path=os.path.join(certs_dir, "hytrust-kmip-scylla.pem"),
