@@ -4432,14 +4432,14 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
             self.set_target_node(current_disruption="ExpandCluster")
             new_node = self.add_new_nodes(count=1, rack=0, instance_type=instance_type_to_add)[0]
             node_map[new_node] = instance_type_to_add
-            time.sleep(self.interval)
+            # time.sleep(self.interval)
 
             # remove nodes if necesary
             removed = []
             for node in nodes_to_remove:
                 removed.append(node_map.pop(node))
                 self.decommission_nodes([node])
-            time.sleep(self.interval)
+            # time.sleep(self.interval)
 
             current_size = sum(instance_size_map[instance] for instance in node_map.values())
             self.log.info(
@@ -4457,7 +4457,7 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
 
             # write new data to the cluster
             write_data(current_size)
-            time.sleep(self.interval)
+            # time.sleep(self.interval)
 
     def disrupt_enable_disable_table_encryption_aws_kms_provider_without_rotation(self):
         self._enable_disable_table_encryption(
