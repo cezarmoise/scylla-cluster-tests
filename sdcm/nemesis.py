@@ -4373,6 +4373,91 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
     # TODO: add support for the 'LocalFileSystemKeyProviderFactory' and 'KmipKeyProviderFactory' key providers
     # TODO: add encryption for a table with large partitions?
 
+    def grow_incremental_instances(self):
+        # define the size of i4i.large as one unit, the the others double each time
+        instance_size_map = {
+            "i4i.large": 1,
+            "i4i.xlarge": 2,
+            "i4i.2xlarge": 4,
+            "i4i.4xlarge": 8,
+            "i4i.8xlarge": 16
+        }
+
+        def upgrade_cluster(node_map):
+            """Determine what instances to add and what nodes to remove"""
+
+            if "i4i.large" not in node_map.values():
+                return "i4i.large", []
+
+            sorted_nodes = sorted(node_map.keys(), key=lambda x: instance_size_map[node_map[x]])
+            increasing_sequence = [sorted_nodes[0]]
+            for i in range(1, len(sorted_nodes) - 2):
+                if instance_size_map[node_map[sorted_nodes[i]]] == instance_size_map[node_map[increasing_sequence[-1]]] * 2:
+                    increasing_sequence.append(sorted_nodes[i])
+                else:
+                    break
+
+            combined_size = sum(instance_size_map[node_map[inst]] for inst in increasing_sequence) + 1
+            upgrade_target = [k for k, v in instance_size_map.items() if v == combined_size]
+
+            if upgrade_target:
+                return upgrade_target[0], increasing_sequence
+
+            raise ValueError("Could not determine what to upgrade.")
+
+        def write_data(n):
+            stress_cmds = self.cluster.params.get('stress_cmd_w')
+            pre_create_keyspace = self.cluster.params.get('pre_create_keyspace')
+            write_threads = []
+            for stress_cmd in stress_cmds:
+                cmd = stress_cmd.replace("keyspace_placeholder", f"keyspace{n}")
+                pre_create_keyspace = pre_create_keyspace.replace("keyspace1", f"keyspace{n}")
+                with self.cluster.cql_connection_patient(self.target_node, connect_timeout=600) as session:
+                    session.execute(SimpleStatement(pre_create_keyspace), timeout=300)
+                write_threads.append(self.tester.run_stress_thread(
+                    stress_cmd=cmd, stop_test_on_failure=False, stats_aggregate_cmds=False, round_robin=True))
+            for write_thread in write_threads:
+                self.tester.verify_stress_thread(write_thread)
+
+        target_size = 3 * instance_size_map["i4i.8xlarge"]  # 3 instances of i4i.8xlarge = 48 units
+        node_map = {node: "i4i.large" for node in self.cluster.nodes}
+        current_size = sum(instance_size_map[instance] for instance in node_map.values())
+
+        while current_size < target_size:
+            old_node_map = node_map.copy()
+            old_size = current_size
+            instance_type_to_add, nodes_to_remove = upgrade_cluster(node_map)
+
+            # add the new node
+            new_node = self.add_new_nodes(count=1, rack=0, instance_type=instance_type_to_add)[0]
+            node_map[new_node] = instance_type_to_add
+            time.sleep(self.interval)
+
+            # remove nodes if necesary
+            removed = []
+            for node in nodes_to_remove:
+                removed.append(node_map.pop(node))
+                self.decommission_nodes([node])
+            time.sleep(self.interval)
+
+            current_size = sum(instance_size_map[instance] for instance in node_map.values())
+            self.log.info(
+                f"Old cluster: (Size: {old_size}) {list(sorted(old_node_map.values(), key=lambda x: instance_size_map[x]))} ")
+            self.log.info(
+                f"New cluster: (Size: {current_size}) {list(sorted(node_map.values(), key=lambda x: instance_size_map[x]))} ")
+            self.log.info(f"Added: {instance_type_to_add}, Removed: {removed}")
+
+            if list(old_node_map.values()) == list(node_map.values()):
+                raise ValueError("Cluster state did not change after an iteration, indicating a potential logic error.")
+
+            if current_size - old_size != 1:
+                raise ValueError(
+                    f"Cluster size increased by {current_size - old_size}, indicating a potential logic error.")
+
+            # write new data to the cluster
+            write_data(current_size)
+            time.sleep(self.interval)
+
     def disrupt_enable_disable_table_encryption_aws_kms_provider_without_rotation(self):
         self._enable_disable_table_encryption(
             enable_kms_key_rotation=False,
@@ -5664,6 +5749,15 @@ class AddRemoveRackNemesis(Nemesis):
 
     def disrupt(self):
         self.disrupt_grow_shrink_new_rack()
+
+
+class GrowIncrementalMonkey(Nemesis):
+    disruptive = True
+    kubernetes = True
+    topology_changes = True
+
+    def disrupt(self):
+        self.grow_incremental_instances()
 
 
 class StopWaitStartMonkey(Nemesis):
