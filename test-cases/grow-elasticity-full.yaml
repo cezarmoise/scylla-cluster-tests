@@ -30,6 +30,7 @@ instance_type_monitor: 't3.large'
 nemesis_class_name: 'GrowIncrementalMonkey'
 nemesis_interval: 10
 nemesis_sequence_sleep_between_ops: 10
+nemesis_during_prepare: false
 
 user_prefix: 'elasticity-test'
 
