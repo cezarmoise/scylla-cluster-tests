@@ -62,6 +62,7 @@ from sdcm.cluster import (
     NodeCleanedAfterDecommissionAborted,
     NodeStayInClusterAfterDecommission,
 )
+from sdcm.cluster_aws import AWSNode
 from sdcm.cluster_k8s import (
     KubernetesOps,
     PodCluster,
@@ -96,7 +97,7 @@ from sdcm.sct_events.group_common_events import (
     ignore_ipv6_failure_to_assign,
 )
 from sdcm.sct_events.health import DataValidatorEvent
-from sdcm.sct_events.loaders import CassandraStressLogEvent, ScyllaBenchEvent
+from sdcm.sct_events.loaders import CassandraStressEvent, CassandraStressLogEvent, ScyllaBenchEvent
 from sdcm.sct_events.nemesis import DisruptionEvent
 from sdcm.sct_events.system import InfoEvent, CoreDumpEvent
 from sdcm.sla.sla_tests import SlaTests
@@ -4456,6 +4457,121 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
     # TODO: add support for the 'LocalFileSystemKeyProviderFactory' and 'KmipKeyProviderFactory' key providers
     # TODO: add encryption for a table with large partitions?
 
+    @target_data_nodes
+    def grow_incremental_instances(self):  # noqa: PLR0914
+        if self.cluster.params.get("cluster_backend") != "aws":
+            raise UnsupportedNemesis("This nemesis is supported only on the AWS cluster backend")
+
+        # define the size of i4i.large as one unit, the the others double each time
+        instance_size_map = {
+            "i4i.large": 1,
+            "i4i.xlarge": 2,
+            "i4i.2xlarge": 4,
+            "i4i.4xlarge": 8,
+            "i4i.8xlarge": 16
+        }
+
+        def upgrade_cluster(node_types, max_nodes):
+            """Determine what instances to add and what nodes to remove"""
+
+            if "i4i.large" not in node_types:
+                return "i4i.large", []
+
+            sorted_nodes = sorted(node_types, key=lambda x: instance_size_map[x])
+            increasing_sequence = [sorted_nodes[0]]
+            for i in range(1, len(sorted_nodes) - max_nodes + 1):
+                if instance_size_map[sorted_nodes[i]] == instance_size_map[increasing_sequence[-1]] * 2:
+                    increasing_sequence.append(sorted_nodes[i])
+                else:
+                    break
+
+            combined_size = sum(instance_size_map[inst] for inst in increasing_sequence) + 1
+            upgrade_target = [k for k, v in instance_size_map.items() if v == combined_size]
+
+            if upgrade_target:
+                return upgrade_target[0], increasing_sequence
+
+            raise ValueError("Could not determine what to upgrade.")
+
+        def write_data(n):
+            stress_cmds = self.cluster.params.get('stress_cmd_w')
+            pre_cmds = self.cluster.params.get('pre_create_keyspace')
+            write_threads = []
+            for stress_cmd in stress_cmds:
+                for pre_cmd in pre_cmds:
+                    with self.cluster.cql_connection_patient(self.target_node, connect_timeout=600) as session:
+                        session.execute(SimpleStatement(pre_cmd.replace("keyspace0", f"keyspace{n}")), timeout=300)
+                write_threads.append(self.tester.run_stress_thread(
+                    stress_cmd=stress_cmd.replace("keyspace0", f"keyspace{n}"), stop_test_on_failure=False, stats_aggregate_cmds=False, round_robin=True))
+            for write_thread in write_threads:
+                self.tester.verify_stress_thread(write_thread)
+
+        def get_instance_type(node: AWSNode):
+            return node._instance.instance_type
+
+        def printable_cluster(nodes_by_rack_and_region):
+            s = []
+            for k, v in nodes_by_rack_and_region.items():
+                self.log.info(f"{k=} {v=}")
+                s.append(f"Rack {k[1]}: {sorted(map(get_instance_type, v), key=lambda x: instance_size_map[x])}")
+            return "\n" + "\n".join(s)
+
+        # main logic
+        nodes_by_rack_and_region = self.cluster.nodes_by_racks_idx_and_regions()
+        num_nodes_per_rack = int(self.cluster.params.get('n_db_nodes')) // len(nodes_by_rack_and_region.keys())
+
+        initial_node_type = self.cluster.params.get("instance_type_db")
+        init_size = num_nodes_per_rack * instance_size_map[initial_node_type]
+        target_instance_type = self.cluster.params.get("nemesis_grow_shrink_instance_type")
+        target_size = num_nodes_per_rack * instance_size_map[target_instance_type]
+
+        for i in range(init_size, target_size):
+            old_nodes_by_rr = self.cluster.nodes_by_racks_idx_and_regions()
+            old_printable = printable_cluster(old_nodes_by_rr)
+            one_rack = list(old_nodes_by_rr.values())[0]
+            node_types_in_rack = list(map(get_instance_type, one_rack))
+            instance_type_to_add, instance_types_to_remove = upgrade_cluster(
+                node_types_in_rack, max_nodes=num_nodes_per_rack)
+
+            # needed by the add_new_nodes method
+            self.set_target_node(current_disruption="GrowIncremental")
+
+            # add the new node
+            new_nodes = []
+            for region_and_rack in old_nodes_by_rr.keys():
+                new_nodes += self._add_and_init_new_cluster_nodes(
+                    1, rack=int(region_and_rack[1]), instance_type=instance_type_to_add)
+            for node in new_nodes:
+                wait_no_tablets_migration_running(node)
+
+            # remove nodes if necesary
+            nodes_to_remove = []
+            for nodes in old_nodes_by_rr.values():
+                to_remove = instance_types_to_remove[:]
+                for node in nodes:
+                    if get_instance_type(node) in to_remove:
+                        nodes_to_remove.append(node)
+                        to_remove.remove(get_instance_type(node))
+            if nodes_to_remove:
+                self.decommission_nodes(nodes_to_remove)
+
+            current_nodes_by_rr = self.cluster.nodes_by_racks_idx_and_regions()
+            current_printable = printable_cluster(current_nodes_by_rr)
+            self.log.info(f"Old cluster: {old_printable}")
+            self.log.info(f"New cluster: {current_printable}")
+            self.log.info(f"Added: {instance_type_to_add}, Removed: {instance_types_to_remove}")
+
+            self.tester.wait_no_compactions_running()
+            # write new data to the cluster
+            write_data(i)
+
+        # wait a little then end the test
+        time.sleep(900)
+        with EventsSeverityChangerFilter(new_severity=Severity.NORMAL,  # killing stress creates Critical error
+                                         event_class=CassandraStressEvent,
+                                         extra_time_to_expiration=60):
+            self.loaders.kill_stress_thread()
+
     @target_all_nodes
     def disrupt_enable_disable_table_encryption_aws_kms_provider_without_rotation(self):
         self._enable_disable_table_encryption(
@@ -5845,6 +5961,15 @@ class AddRemoveRackNemesis(Nemesis):
 
     def disrupt(self):
         self.disrupt_grow_shrink_new_rack()
+
+
+class GrowIncrementalMonkey(Nemesis):
+    disruptive = True
+    kubernetes = True
+    topology_changes = True
+
+    def disrupt(self):
+        self.grow_incremental_instances()
 
 
 class StopWaitStartMonkey(Nemesis):
