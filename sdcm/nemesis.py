@@ -4429,7 +4429,7 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
             instance_type_to_add, nodes_to_remove = upgrade_cluster(node_map)
 
             # add the new node
-            self.set_target_node()
+            self.set_target_node(current_disruption="ExpandCluster")
             new_node = self.add_new_nodes(count=1, rack=0, instance_type=instance_type_to_add)[0]
             node_map[new_node] = instance_type_to_add
             time.sleep(self.interval)
