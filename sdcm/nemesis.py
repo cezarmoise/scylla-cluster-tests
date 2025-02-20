@@ -4298,6 +4298,12 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
         return stress_queue
 
     @target_data_nodes
+    def grow_shrink_heterogenous(self):
+        to_remove = [self.cluster.nodes[0]]
+        self._grow_cluster(rack=None)
+        self._shrink_cluster(rack=None, new_nodes=to_remove)
+
+    @target_data_nodes
     def disrupt_grow_shrink_cluster(self):
         sleep_time_between_ops = self.cluster.params.get('nemesis_sequence_sleep_between_ops')
         if not self.has_steady_run and sleep_time_between_ops:
@@ -5655,6 +5661,15 @@ class AddRemoveDcNemesis(Nemesis):
 
     def disrupt(self):
         self.disrupt_add_remove_dc()
+
+
+class GrowShrinkHeterogenousMonkey(Nemesis):
+    disruptive = True
+    kubernetes = True
+    topology_changes = True
+
+    def disrupt(self):
+        self.grow_shrink_heterogenous()
 
 
 class GrowShrinkClusterNemesis(Nemesis):
