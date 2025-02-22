@@ -4452,7 +4452,7 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
                 node.run_nodetool("cleanup")
 
             # run a repair
-            # self._mgmt_repair_cli()
+            self._mgmt_repair_cli()
 
             current_size = sum(instance_size_map[instance] for instance in node_map.values())
             self.log.info(
@@ -4472,7 +4472,7 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
             write_data(current_size)
 
             # run a backup
-            # self._mgmt_backup(backup_specific_tables=[f"keyspace{current_size}"])
+            self._mgmt_backup(backup_specific_tables=[f"keyspace{current_size}"])
 
         # wait a little then end the test
         time.sleep(900)
