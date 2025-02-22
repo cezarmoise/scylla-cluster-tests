@@ -93,7 +93,7 @@ from sdcm.sct_events.group_common_events import (
     ignore_ipv6_failure_to_assign,
 )
 from sdcm.sct_events.health import DataValidatorEvent
-from sdcm.sct_events.loaders import CassandraStressLogEvent, ScyllaBenchEvent
+from sdcm.sct_events.loaders import CassandraStressEvent, CassandraStressLogEvent, ScyllaBenchEvent
 from sdcm.sct_events.nemesis import DisruptionEvent
 from sdcm.sct_events.system import InfoEvent, CoreDumpEvent
 from sdcm.sla.sla_tests import SlaTests
@@ -4476,7 +4476,10 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
 
         # wait a little then end the test
         time.sleep(900)
-        raise Exception("End the test!")
+        with EventsSeverityChangerFilter(new_severity=Severity.NORMAL,  # killing stress creates Critical error
+                                         event_class=CassandraStressEvent,
+                                         extra_time_to_expiration=60):
+            self.loaders.kill_stress_thread()
 
     def disrupt_enable_disable_table_encryption_aws_kms_provider_without_rotation(self):
         self._enable_disable_table_encryption(
