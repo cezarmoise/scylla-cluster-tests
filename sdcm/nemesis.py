@@ -4439,7 +4439,7 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
         def printable_cluster(nodes_by_rack_and_region):
             s = []
             for k, v in nodes_by_rack_and_region:
-                s.append(f"Rack {k[0]}: {sorted(map(instance_type, v), lambda x: instance_size_map[x])}")
+                s.append(f"Rack {k[0]}: {sorted(map(instance_type, v), key=lambda x: instance_size_map[x])}")
             return "\n" + "\n".join(s)
 
         # main logic
