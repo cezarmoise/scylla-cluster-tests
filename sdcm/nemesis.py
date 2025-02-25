@@ -4440,7 +4440,7 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
             s = []
             for k, v in nodes_by_rack_and_region.items():
                 self.log.info(f"{k=} {v=}")
-                s.append(f"Rack {k[0]}: {sorted(map(get_instance_type, v), key=lambda x: instance_size_map[x])}")
+                s.append(f"Rack {k[1]}: {sorted(map(get_instance_type, v), key=lambda x: instance_size_map[x])}")
             return "\n" + "\n".join(s)
 
         # main logic
@@ -4485,7 +4485,7 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
             current_nodes_by_rr = self.cluster.nodes_by_racks_idx_and_regions()
             current_printable = printable_cluster(current_nodes_by_rr)
             self.log.info(f"Old cluster: {old_printable}")
-            self.log.info(f"Old cluster: {current_printable}")
+            self.log.info(f"New cluster: {current_printable}")
             self.log.info(f"Added: {instance_type_to_add}, Removed: {instance_types_to_remove}")
 
             # write new data to the cluster
