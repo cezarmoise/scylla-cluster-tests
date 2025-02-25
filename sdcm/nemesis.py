@@ -4438,7 +4438,7 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
 
         def printable_cluster(nodes_by_rack_and_region):
             s = []
-            for k, v in nodes_by_rack_and_region:
+            for k, v in nodes_by_rack_and_region.items():
                 self.log.info(f"{k=} {v=}")
                 s.append(f"Rack {k[0]}: {sorted(map(get_instance_type, v), key=lambda x: instance_size_map[x])}")
             return "\n" + "\n".join(s)
@@ -4465,7 +4465,7 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
 
             # add the new node
             new_nodes = []
-            for region_and_rack, _ in nodes_by_rack_and_region:
+            for region_and_rack in old_nodes_by_rr.keys():
                 new_nodes += self._add_and_init_new_cluster_nodes(
                     1, rack=int(region_and_rack[1]), instance_type=instance_type_to_add)
             for node in new_nodes:
@@ -4473,7 +4473,7 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
 
             # remove nodes if necesary
             nodes_to_remove = []
-            for _, nodes in nodes_by_rack_and_region:
+            for nodes in old_nodes_by_rr.values():
                 to_remove = instance_types_to_remove[:]
                 for node in nodes:
                     if get_instance_type(node) in to_remove:
