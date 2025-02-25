@@ -59,6 +59,7 @@ from sdcm.cluster import (
     NodeCleanedAfterDecommissionAborted,
     NodeStayInClusterAfterDecommission,
 )
+from sdcm.cluster_aws import AWSNode
 from sdcm.cluster_k8s import (
     KubernetesOps,
     PodCluster,
@@ -4382,7 +4383,7 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
                                          extra_time_to_expiration=60):
             self.loaders.kill_stress_thread()
 
-    def grow_incremental_instances(self):
+    def grow_incremental_instances(self):  # noqa: PLR0914
         if self.cluster.params.get("cluster_backend") != "aws":
             raise UnsupportedNemesis("This nemesis is supported only on the AWS cluster backend")
 
@@ -4395,32 +4396,21 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
             "i4i.8xlarge": 16
         }
 
-        nodes_by_rack_and_region = self.cluster.nodes_by_racks_idx_and_regions()
-        num_nodes_per_rack = int(self.cluster.params.get('n_db_nodes')) // len(nodes_by_rack_and_region.keys())
-        self.log.info(f"{nodes_by_rack_and_region}")
-        node = self.cluster.nodes[0]
-        self.log.info(f"{dir(node)}")
-        self.log.info(f"{node.__dict__}")
-        self.log.info(f"{node._instance.instance_type}")
-        self.log.info(f"{dir(node._instance)}")
-        self.log.info(f"{node._instance.__dict__}")
-        self.stop_stress_threads()
-
-        def upgrade_cluster(node_map, max_nodes):
+        def upgrade_cluster(node_types, max_nodes):
             """Determine what instances to add and what nodes to remove"""
 
-            if "i4i.large" not in node_map.values():
+            if "i4i.large" not in node_types:
                 return "i4i.large", []
 
-            sorted_nodes = sorted(node_map.keys(), key=lambda x: instance_size_map[node_map[x]])
+            sorted_nodes = sorted(node_types, key=lambda x: instance_size_map[x])
             increasing_sequence = [sorted_nodes[0]]
             for i in range(1, len(sorted_nodes) - max_nodes + 1):
-                if instance_size_map[node_map[sorted_nodes[i]]] == instance_size_map[node_map[increasing_sequence[-1]]] * 2:
+                if instance_size_map[sorted_nodes[i]] == instance_size_map[increasing_sequence[-1]] * 2:
                     increasing_sequence.append(sorted_nodes[i])
                 else:
                     break
 
-            combined_size = sum(instance_size_map[node_map[inst]] for inst in increasing_sequence) + 1
+            combined_size = sum(instance_size_map[inst] for inst in increasing_sequence) + 1
             upgrade_target = [k for k, v in instance_size_map.items() if v == combined_size]
 
             if upgrade_target:
@@ -4443,55 +4433,65 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
             for write_thread in write_threads:
                 self.tester.verify_stress_thread(write_thread)
 
+        def instance_type(node: AWSNode):
+            return node._instance.instance_type
+
+        def printable_cluster(nodes_by_rack_and_region):
+            s = []
+            for k, v in nodes_by_rack_and_region:
+                s.append(f"Rack {k[0]}: {sorted(map(instance_type, v), lambda x: instance_size_map[x])}")
+            return "\n" + "\n".join(s)
+
+        # main logic
+        nodes_by_rack_and_region = self.cluster.nodes_by_racks_idx_and_regions()
+        num_nodes_per_rack = int(self.cluster.params.get('n_db_nodes')) // len(nodes_by_rack_and_region.keys())
+
         initial_node_type = self.cluster.params.get("instance_type_db")
-        node_map = {node: initial_node_type for node in self.cluster.nodes}
-        current_size = sum(instance_size_map[instance] for instance in node_map.values())
+        init_size = num_nodes_per_rack * instance_size_map[initial_node_type]
         target_instance_type = self.cluster.params.get("nemesis_grow_shrink_instance_type")
         target_size = num_nodes_per_rack * instance_size_map[target_instance_type]
 
-        for _ in range(current_size, target_size):
-            old_node_map = node_map.copy()
-            old_size = current_size
-            instance_type_to_add, nodes_to_remove = upgrade_cluster(node_map, max_nodes=num_nodes_per_rack)
+        for i in range(init_size, target_size):
+            old_nodes_by_rr = self.cluster.nodes_by_racks_idx_and_regions()
+            old_printable = printable_cluster(old_nodes_by_rr)
+            one_rack = list(old_nodes_by_rr.values())[0]
+            node_types_in_rack = list(map(instance_type, one_rack))
+            instance_type_to_add, instance_types_to_remove = upgrade_cluster(
+                node_types_in_rack, max_nodes=num_nodes_per_rack)
+
+            # needed by the add_new_nodes method
+            self.set_target_node(current_disruption="GrowIncremental")
 
             # add the new node
-            self.set_target_node(current_disruption="GrowIncremental")
-            new_node = self.add_new_nodes(count=1, rack=0, instance_type=instance_type_to_add)[0]
-            node_map[new_node] = instance_type_to_add
+            new_nodes = []
+            for region_and_rack, _ in nodes_by_rack_and_region:
+                new_nodes += self._add_and_init_new_cluster_nodes(
+                    1, rack=int(region_and_rack[1]), instance_type=instance_type_to_add)
+            for node in new_nodes:
+                wait_no_tablets_migration_running(node)
 
             # remove nodes if necesary
+            nodes_to_remove = []
+            for _, nodes in nodes_by_rack_and_region:
+                to_remove = instance_types_to_remove[:]
+                for node in nodes:
+                    if instance_type(node) in to_remove:
+                        nodes_to_remove.append(node)
+                        to_remove.remove(instance_type(node))
             if nodes_to_remove:
                 self.decommission_nodes(nodes_to_remove)
-            removed = []
-            for node in nodes_to_remove:
-                removed.append(node_map.pop(node))
 
-            # run cleanup of cluster
-            for node in node_map.keys():
-                node.run_nodetool("cleanup")
-
-            # run a repair
-            self._mgmt_repair_cli()
-
-            current_size = sum(instance_size_map[instance] for instance in node_map.values())
-            self.log.info(
-                f"Old cluster: (Size: {old_size}/{target_size}) {list(sorted(old_node_map.values(), key=lambda x: instance_size_map[x]))} ")
-            self.log.info(
-                f"New cluster: (Size: {current_size}/{target_size}) {list(sorted(node_map.values(), key=lambda x: instance_size_map[x]))} ")
-            self.log.info(f"Added: {instance_type_to_add}, Removed: {removed}")
-
-            if list(old_node_map.values()) == list(node_map.values()):
-                raise ValueError("Cluster state did not change after an iteration, indicating a potential logic error.")
-
-            if current_size - old_size != 1:
-                raise ValueError(
-                    f"Cluster size increased by {current_size - old_size}, indicating a potential logic error.")
+            current_nodes_by_rr = self.cluster.nodes_by_racks_idx_and_regions()
+            current_printable = printable_cluster(current_nodes_by_rr)
+            self.log.info(f"Old cluster: {old_printable}")
+            self.log.info(f"Old cluster: {current_printable}")
+            self.log.info(f"Added: {instance_type_to_add}, Removed: {instance_types_to_remove}")
 
             # write new data to the cluster
-            write_data(current_size)
+            write_data(i)
 
             # run a backup
-            self._mgmt_backup(backup_specific_tables=[f"keyspace{current_size}"])
+            # self._mgmt_backup(backup_specific_tables=[f"keyspace{i}"])
 
         # wait a little then end the test
         time.sleep(900)
