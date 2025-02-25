@@ -4399,7 +4399,9 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
         num_nodes_per_rack = int(self.cluster.params.get('n_db_nodes')) // len(nodes_by_rack_and_region.keys())
         self.log.info(f"{nodes_by_rack_and_region}")
         node = self.cluster.nodes[0]
-        self.log.info(f"{node._instance}")
+        self.log.info(f"{dir(node)}")
+        self.log.info(f"{node.__dict__}")
+        self.log.info(f"{node._instance.instance_type}")
         self.log.info(f"{dir(node._instance)}")
         self.log.info(f"{node._instance.__dict__}")
         self.stop_stress_threads()
