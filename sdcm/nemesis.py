@@ -4376,7 +4376,16 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
     # TODO: add support for the 'LocalFileSystemKeyProviderFactory' and 'KmipKeyProviderFactory' key providers
     # TODO: add encryption for a table with large partitions?
 
+    def stop_stress_threads(self):
+        with EventsSeverityChangerFilter(new_severity=Severity.NORMAL,  # killing stress creates Critical error
+                                         event_class=CassandraStressEvent,
+                                         extra_time_to_expiration=60):
+            self.loaders.kill_stress_thread()
+
     def grow_incremental_instances(self):
+        if self.cluster.params.get("cluster_backend") != "aws":
+            raise UnsupportedNemesis("This nemesis is supported only on the AWS cluster backend")
+
         # define the size of i4i.large as one unit, the the others double each time
         instance_size_map = {
             "i4i.large": 1,
@@ -4388,8 +4397,14 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
 
         nodes_by_rack_and_region = self.cluster.nodes_by_racks_idx_and_regions()
         num_nodes_per_rack = int(self.cluster.params.get('n_db_nodes')) // len(nodes_by_rack_and_region.keys())
+        self.log.info(f"{nodes_by_rack_and_region}")
+        node = self.cluster.nodes[0]
+        self.log.info(f"{node._instance}")
+        self.log.info(f"{dir(node._instance)}")
+        self.log.info(f"{node._instance.__dict__}")
+        self.stop_stress_threads()
 
-        def upgrade_cluster(node_map):
+        def upgrade_cluster(node_map, max_nodes):
             """Determine what instances to add and what nodes to remove"""
 
             if "i4i.large" not in node_map.values():
@@ -4397,7 +4412,7 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
 
             sorted_nodes = sorted(node_map.keys(), key=lambda x: instance_size_map[node_map[x]])
             increasing_sequence = [sorted_nodes[0]]
-            for i in range(1, len(sorted_nodes) - num_nodes_per_rack + 1):
+            for i in range(1, len(sorted_nodes) - max_nodes + 1):
                 if instance_size_map[node_map[sorted_nodes[i]]] == instance_size_map[node_map[increasing_sequence[-1]]] * 2:
                     increasing_sequence.append(sorted_nodes[i])
                 else:
@@ -4416,9 +4431,9 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
             pre_create_keyspace = self.cluster.params.get('pre_create_keyspace')
             write_threads = []
             for stress_cmd in stress_cmds:
-                cmd = stress_cmd.replace("keyspace_placeholder", f"keyspace{n}")
+                cmd = stress_cmd.replace("keyspace0", f"keyspace{n}")
                 if pre_create_keyspace:
-                    pre_create_keyspace = pre_create_keyspace.replace("keyspace3", f"keyspace{n}")
+                    pre_create_keyspace = pre_create_keyspace.replace("keyspace0", f"keyspace{n}")
                 with self.cluster.cql_connection_patient(self.target_node, connect_timeout=600) as session:
                     session.execute(SimpleStatement(pre_create_keyspace), timeout=300)
                 write_threads.append(self.tester.run_stress_thread(
@@ -4435,7 +4450,7 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
         for _ in range(current_size, target_size):
             old_node_map = node_map.copy()
             old_size = current_size
-            instance_type_to_add, nodes_to_remove = upgrade_cluster(node_map)
+            instance_type_to_add, nodes_to_remove = upgrade_cluster(node_map, max_nodes=num_nodes_per_rack)
 
             # add the new node
             self.set_target_node(current_disruption="GrowIncremental")
@@ -4478,10 +4493,7 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
 
         # wait a little then end the test
         time.sleep(900)
-        with EventsSeverityChangerFilter(new_severity=Severity.NORMAL,  # killing stress creates Critical error
-                                         event_class=CassandraStressEvent,
-                                         extra_time_to_expiration=60):
-            self.loaders.kill_stress_thread()
+        self.stop_stress_threads()
 
     def disrupt_enable_disable_table_encryption_aws_kms_provider_without_rotation(self):
         self._enable_disable_table_encryption(
