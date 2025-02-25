@@ -20,6 +20,7 @@ stress_cmd_w: [
 ]
 
 n_db_nodes: 3
+availability_zone: 'a,b,c'
 instance_type_db: 'i4i.large'
 nemesis_grow_shrink_instance_type: 'i4i.8xlarge'
 

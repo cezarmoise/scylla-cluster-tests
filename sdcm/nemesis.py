@@ -4385,7 +4385,9 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
             "i4i.4xlarge": 8,
             "i4i.8xlarge": 16
         }
-        num_nodes = int(self.cluster.params.get('n_db_nodes'))
+
+        nodes_by_rack_and_region = self.cluster.nodes_by_racks_idx_and_regions()
+        num_nodes_per_rack = int(self.cluster.params.get('n_db_nodes')) // len(nodes_by_rack_and_region.keys())
 
         def upgrade_cluster(node_map):
             """Determine what instances to add and what nodes to remove"""
@@ -4395,7 +4397,7 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
 
             sorted_nodes = sorted(node_map.keys(), key=lambda x: instance_size_map[node_map[x]])
             increasing_sequence = [sorted_nodes[0]]
-            for i in range(1, len(sorted_nodes) - num_nodes + 1):
+            for i in range(1, len(sorted_nodes) - num_nodes_per_rack + 1):
                 if instance_size_map[node_map[sorted_nodes[i]]] == instance_size_map[node_map[increasing_sequence[-1]]] * 2:
                     increasing_sequence.append(sorted_nodes[i])
                 else:
@@ -4428,7 +4430,7 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
         node_map = {node: initial_node_type for node in self.cluster.nodes}
         current_size = sum(instance_size_map[instance] for instance in node_map.values())
         target_instance_type = self.cluster.params.get("nemesis_grow_shrink_instance_type")
-        target_size = num_nodes * instance_size_map[target_instance_type]
+        target_size = num_nodes_per_rack * instance_size_map[target_instance_type]
 
         for _ in range(current_size, target_size):
             old_node_map = node_map.copy()
