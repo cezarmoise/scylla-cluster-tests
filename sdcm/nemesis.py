@@ -4433,13 +4433,14 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
             for write_thread in write_threads:
                 self.tester.verify_stress_thread(write_thread)
 
-        def instance_type(node: AWSNode):
+        def get_instance_type(node: AWSNode):
             return node._instance.instance_type
 
         def printable_cluster(nodes_by_rack_and_region):
             s = []
             for k, v in nodes_by_rack_and_region:
-                s.append(f"Rack {k[0]}: {sorted(map(instance_type, v), key=lambda x: instance_size_map[x])}")
+                self.log.info(f"{k=} {v=}")
+                s.append(f"Rack {k[0]}: {sorted(map(get_instance_type, v), key=lambda x: instance_size_map[x])}")
             return "\n" + "\n".join(s)
 
         # main logic
@@ -4455,7 +4456,7 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
             old_nodes_by_rr = self.cluster.nodes_by_racks_idx_and_regions()
             old_printable = printable_cluster(old_nodes_by_rr)
             one_rack = list(old_nodes_by_rr.values())[0]
-            node_types_in_rack = list(map(instance_type, one_rack))
+            node_types_in_rack = list(map(get_instance_type, one_rack))
             instance_type_to_add, instance_types_to_remove = upgrade_cluster(
                 node_types_in_rack, max_nodes=num_nodes_per_rack)
 
@@ -4475,9 +4476,9 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
             for _, nodes in nodes_by_rack_and_region:
                 to_remove = instance_types_to_remove[:]
                 for node in nodes:
-                    if instance_type(node) in to_remove:
+                    if get_instance_type(node) in to_remove:
                         nodes_to_remove.append(node)
-                        to_remove.remove(instance_type(node))
+                        to_remove.remove(get_instance_type(node))
             if nodes_to_remove:
                 self.decommission_nodes(nodes_to_remove)
 
