@@ -4488,6 +4488,7 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
             self.log.info(f"New cluster: {current_printable}")
             self.log.info(f"Added: {instance_type_to_add}, Removed: {instance_types_to_remove}")
 
+            self.tester.wait_no_compactions_running()
             # write new data to the cluster
             write_data(i)
 

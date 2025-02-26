@@ -13,10 +13,10 @@ stress_cmd: [
 ]
 
 stress_cmd_w: [
-  "cassandra-stress write no-warmup cl=ALL n=90000000 -schema keyspace=keyspace0 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate threads=200 -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..100000000",
-  "cassandra-stress write no-warmup cl=ALL n=90000000 -schema keyspace=keyspace0 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate threads=200 -col 'size=FIXED(128) n=FIXED(8)' -pop seq=100000001..200000000",
-  "cassandra-stress write no-warmup cl=ALL n=90000000 -schema keyspace=keyspace0 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate threads=200 -col 'size=FIXED(128) n=FIXED(8)' -pop seq=200000001..300000000",
-  "cassandra-stress write no-warmup cl=ALL n=90000000 -schema keyspace=keyspace0 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate threads=200 -col 'size=FIXED(128) n=FIXED(8)' -pop seq=300000001..400000000",
+  "cassandra-stress write no-warmup cl=ALL n=90000000 -schema keyspace=keyspace0 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate threads=100 fixed=10000/s -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..100000000",
+  "cassandra-stress write no-warmup cl=ALL n=90000000 -schema keyspace=keyspace0 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate threads=100 fixed=10000/s -col 'size=FIXED(128) n=FIXED(8)' -pop seq=100000001..200000000",
+  "cassandra-stress write no-warmup cl=ALL n=90000000 -schema keyspace=keyspace0 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate threads=100 fixed=10000/s -col 'size=FIXED(128) n=FIXED(8)' -pop seq=200000001..300000000",
+  "cassandra-stress write no-warmup cl=ALL n=90000000 -schema keyspace=keyspace0 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate threads=100 fixed=10000/s -col 'size=FIXED(128) n=FIXED(8)' -pop seq=300000001..400000000",
 ]
 
 n_db_nodes: 3
