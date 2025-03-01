@@ -39,3 +39,4 @@ store_perf_results: true
 email_recipients: ["scylla-perf-results@scylladb.com"]
 email_subject_postfix: 'elasticity test'
 parallel_node_operations: true
+run_db_node_benchmarks: true
