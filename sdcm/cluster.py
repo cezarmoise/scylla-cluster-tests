@@ -3862,7 +3862,7 @@ class BaseCluster:  # pylint: disable=too-many-instance-attributes,too-many-publ
 
     def get_node_benchmarks_results(self):
         if not self.params.get("run_db_node_benchmarks") or not self.nodes:
-            return None
+            return {}
 
         return self.node_benchmark_manager.comparison
 
