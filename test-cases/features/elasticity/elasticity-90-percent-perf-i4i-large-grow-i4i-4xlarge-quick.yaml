@@ -37,6 +37,6 @@ print_kernel_callstack: true
 
 store_perf_results: true
 email_recipients: ["scylla-perf-results@scylladb.com"]
-use_hdr_cs_histogram: true
+use_hdrhistogram: true
 email_subject_postfix: 'elasticity test'
 parallel_node_operations: true
