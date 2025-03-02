@@ -24,8 +24,8 @@ n_monitor_nodes: 1
 instance_type_monitor: 't3.large'
 
 nemesis_class_name: 'GrowClusterMonkey'
-nemesis_interval: 30
-nemesis_sequence_sleep_between_ops: 10
+nemesis_interval: 5
+nemesis_sequence_sleep_between_ops: 5
 
 user_prefix: 'elasticity-test'
 ami_id_db_scylla_desc: 'VERSION_DESC'
