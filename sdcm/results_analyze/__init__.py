@@ -488,7 +488,9 @@ class LatencyDuringOperationsPerformanceAnalyzer(BaseResultsAnalyzer):
                    f'({email_subject_postfix} {dataset_size}) -'
                    f' {test_name} - {test_version} - {str(test_start_time)}')
         best_results_per_nemesis = self._get_best_per_nemesis_for_each_version(doc, is_gce)
+        self.log.info(f"data before: {data=}")
         self._compare_current_best_results_average(data, best_results_per_nemesis)
+        self.log.info(f"data after: {data=}")
 
         results = dict(
             events_summary=events_summary,

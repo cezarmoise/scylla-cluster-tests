@@ -3338,6 +3338,7 @@ class ClusterTester(db_stats.TestStatsMixin, unittest.TestCase):  # pylint: disa
             self.update({"latency_during_ops": latency_results})
             self.update_test_details()
             try:
+                self.log.info(f"{benchmarks_results=}")
                 results_analyzer.check_regression(test_id=self._test_id, data=latency_results,
                                                   node_benchmarks=benchmarks_results,
                                                   email_subject_postfix=self.params.get('email_subject_postfix'))
