@@ -94,7 +94,7 @@ from sdcm.sct_events.group_common_events import (
     ignore_ipv6_failure_to_assign,
 )
 from sdcm.sct_events.health import DataValidatorEvent
-from sdcm.sct_events.loaders import CassandraStressLogEvent, ScyllaBenchEvent
+from sdcm.sct_events.loaders import CassandraStressEvent, CassandraStressLogEvent, ScyllaBenchEvent
 from sdcm.sct_events.nemesis import DisruptionEvent
 from sdcm.sct_events.system import InfoEvent, CoreDumpEvent
 from sdcm.sla.sla_tests import SlaTests
@@ -3700,6 +3700,21 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
                 self.target_node.traffic_control(None)
                 self.cluster.wait_all_nodes_un()
 
+    @target_data_nodes
+    def write_throttle_drop(self):
+        self.set_target_node(current_disruption="WriteThrottling")
+        with EventsSeverityChangerFilter(new_severity=Severity.NORMAL, event_class=CassandraStressEvent, extra_time_to_expiration=60):
+            stress_cmd = self.cluster.params.get('stress_cmd_w')
+            stress_thread = self.tester.run_stress_thread(
+                stress_cmd=stress_cmd, stop_test_on_failure=False, stats_aggregate_cmds=False, round_robin=True)
+            self.tester.verify_stress_thread(stress_thread)
+
+        sleep_time_between_ops = self.cluster.params.get('nemesis_sequence_sleep_between_ops')
+        time.sleep(sleep_time_between_ops)
+
+        with self.cluster.cql_connection_patient(self.target_node, connect_timeout=600) as session:
+            session.execute("DROP TABLE keyspace2.standard1", timeout=600)
+
     @target_all_nodes
     def disrupt_remove_node_then_add_node(self):  # pylint: disable=too-many-branches
         """
@@ -5725,6 +5740,12 @@ class StopWaitStartMonkey(Nemesis):
 
     def disrupt(self):
         self.disrupt_stop_wait_start_scylla_server(600)
+
+
+class ThrottlingMonkey(Nemesis):
+
+    def disrupt(self):
+        self.write_throttle_drop()
 
 
 class StopStartMonkey(Nemesis):
