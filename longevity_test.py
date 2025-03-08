@@ -162,7 +162,9 @@ class LongevityTest(ClusterTester, loader_utils.LoaderUtilsMixin):
 
             while node_cnt < cluster_target_size:
                 InfoEvent(message=f"Adding node number {node_cnt + 1}").publish()
-                new_nodes = self.db_cluster.add_nodes(count=add_node_cnt, enable_auto_bootstrap=True)
+                instance_type = self.params.get("nemesis_grow_shrink_instance_type")
+                new_nodes = self.db_cluster.add_nodes(
+                    count=add_node_cnt, enable_auto_bootstrap=True, instance_type=instance_type)
                 self.monitors.reconfigure_scylla_monitoring()
                 up_timeout = MAX_TIME_WAIT_FOR_NEW_NODE_UP
                 with adaptive_timeout(Operations.NEW_NODE, node=self.db_cluster.data_nodes[0], timeout=up_timeout):
