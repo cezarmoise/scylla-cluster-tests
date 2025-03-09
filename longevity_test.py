@@ -38,6 +38,7 @@ from sdcm.utils.operations_thread import ThreadParams
 from sdcm.sct_events.system import InfoEvent, TestFrameworkEvent
 from sdcm.sct_events import Severity
 from sdcm.cluster import MAX_TIME_WAIT_FOR_NEW_NODE_UP
+from sdcm.utils.tablets.common import wait_no_tablets_migration_running
 
 
 class LongevityTest(ClusterTester, loader_utils.LoaderUtilsMixin):
@@ -171,6 +172,7 @@ class LongevityTest(ClusterTester, loader_utils.LoaderUtilsMixin):
             with adaptive_timeout(Operations.NEW_NODE, node=self.db_cluster.data_nodes[0], timeout=up_timeout):
                 self.db_cluster.wait_for_init(node_list=new_nodes, timeout=up_timeout, check_node_health=False)
             self.db_cluster.wait_for_nodes_up_and_normal(nodes=new_nodes)
+            wait_no_tablets_migration_running(new_nodes[0])
 
             InfoEvent(
                 message=f"Growing cluster finished, new cluster size is {len(self.db_cluster.data_nodes)}").publish()
