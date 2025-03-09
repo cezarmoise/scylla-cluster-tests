@@ -155,24 +155,25 @@ class LongevityTest(ClusterTester, loader_utils.LoaderUtilsMixin):
 
         # Grow cluster to target size if requested
         if cluster_target_size := self.params.get('cluster_target_size'):
-            add_node_cnt = self.params.get('add_node_cnt')
             node_cnt = len(self.db_cluster.data_nodes)
 
             InfoEvent(message=f"Starting to grow cluster from {node_cnt} to {cluster_target_size}").publish()
-
-            while node_cnt < cluster_target_size:
+            new_nodes = []
+            for idx in range(node_cnt, cluster_target_size):
+                rack_idx = idx % self.db_cluster.racks_count
                 InfoEvent(message=f"Adding node number {node_cnt + 1}").publish()
-                instance_type = self.params.get("nemesis_grow_shrink_instance_type")
-                new_nodes = self.db_cluster.add_nodes(
-                    count=add_node_cnt, enable_auto_bootstrap=True, instance_type=instance_type)
-                self.monitors.reconfigure_scylla_monitoring()
-                up_timeout = MAX_TIME_WAIT_FOR_NEW_NODE_UP
-                with adaptive_timeout(Operations.NEW_NODE, node=self.db_cluster.data_nodes[0], timeout=up_timeout):
-                    self.db_cluster.wait_for_init(node_list=new_nodes, timeout=up_timeout, check_node_health=False)
-                self.db_cluster.wait_for_nodes_up_and_normal(nodes=new_nodes)
-                node_cnt = len(self.db_cluster.data_nodes)
+                instance_type = self.params.get("nemesis_grow_shrink_instance_type") or self.params.get(
+                    "instance_type_db")  # TODO: Maybe add separate param for this
+                new_nodes.extend(self.db_cluster.add_nodes(count=1, rack=rack_idx,
+                                 enable_auto_bootstrap=True, instance_type=instance_type))
+            self.monitors.reconfigure_scylla_monitoring()
+            up_timeout = MAX_TIME_WAIT_FOR_NEW_NODE_UP
+            with adaptive_timeout(Operations.NEW_NODE, node=self.db_cluster.data_nodes[0], timeout=up_timeout):
+                self.db_cluster.wait_for_init(node_list=new_nodes, timeout=up_timeout, check_node_health=False)
+            self.db_cluster.wait_for_nodes_up_and_normal(nodes=new_nodes)
 
-            InfoEvent(message=f"Growing cluster finished, new cluster size is {node_cnt}").publish()
+            InfoEvent(
+                message=f"Growing cluster finished, new cluster size is {len(self.db_cluster.data_nodes)}").publish()
 
         # Collect data about partitions and their rows amount
         if self.partitions_attrs and self.partitions_attrs.validate_partitions:
