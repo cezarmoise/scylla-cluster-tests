@@ -3712,6 +3712,11 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
         sleep_time_between_ops = self.cluster.params.get('nemesis_sequence_sleep_between_ops')
         time.sleep(sleep_time_between_ops)
 
+        self._mgmt_repair_cli()
+
+        sleep_time_between_ops = self.cluster.params.get('nemesis_sequence_sleep_between_ops')
+        time.sleep(sleep_time_between_ops)
+
         with self.cluster.cql_connection_patient(self.target_node, connect_timeout=600) as session:
             session.execute("DROP TABLE keyspace2.standard1", timeout=600)
 
