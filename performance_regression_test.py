@@ -61,6 +61,7 @@ class PerformanceRegressionTest(ClusterTester, loader_utils.LoaderUtilsMixin):  
     @teardown_on_exception
     @log_run_info
     def setUp(self):
+        super().setUp()
         if es_index := self.params.get("custom_es_index"):
             self._test_index = es_index
 
@@ -68,7 +69,6 @@ class PerformanceRegressionTest(ClusterTester, loader_utils.LoaderUtilsMixin):  
         # emails for each test. When we move to use SCT Runners, it won't be necessary.
         self._clean_email_data()
 
-        super().setUp()
         if self.params.get("run_db_node_benchmarks"):
             self.log.info("Validate node benchmarks results")
             compare_results = self.db_cluster.get_node_benchmarks_results() or {}
