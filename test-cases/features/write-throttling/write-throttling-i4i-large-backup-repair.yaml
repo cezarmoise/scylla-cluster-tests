@@ -29,7 +29,7 @@ instance_type_loader: 'c6i.large'
 n_monitor_nodes: 1
 instance_type_monitor: 't3.large'
 
-nemesis_class_name: 'ThrottlingMonkey'
+nemesis_class_name: 'ThrottlingMonkey:1 MgmtBackupSpecificKeyspaces:1 MgmtRepair:1'
 nemesis_during_prepare: false
 nemesis_interval: 30
 nemesis_sequence_sleep_between_ops: 10
