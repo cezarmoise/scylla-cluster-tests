@@ -6,8 +6,8 @@ prepare_write_cmd: [
 ]
 
 pre_create_keyspace: [
-  "CREATE KEYSPACE IF NOT EXISTS keyspace1 WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 3} AND tablets = {'initial': 128};",
-  "CREATE KEYSPACE IF NOT EXISTS keyspace2 WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 3} AND tablets = {'initial': 128};",
+  "CREATE KEYSPACE IF NOT EXISTS keyspace1 WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 3} AND tablets = {'initial': 256};",
+  "CREATE KEYSPACE IF NOT EXISTS keyspace2 WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 3} AND tablets = {'initial': 256};",
 ]
 
 stress_cmd: [
