@@ -3703,6 +3703,7 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
     @target_data_nodes
     def write_throttle_drop(self):
         self.set_target_node(current_disruption="WriteThrottling")
+        self.target_node.run_nodetool('disableautocompaction')
         with EventsSeverityChangerFilter(new_severity=Severity.NORMAL, event_class=CassandraStressEvent, extra_time_to_expiration=60):
             stress_cmd = self.cluster.params.get('stress_cmd_w')
             stress_thread = self.tester.run_stress_thread(
