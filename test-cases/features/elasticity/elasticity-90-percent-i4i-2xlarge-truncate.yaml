@@ -9,11 +9,15 @@ pre_create_keyspace: [
   "CREATE KEYSPACE IF NOT EXISTS keyspace1 WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 3};",
   "CREATE TABLE IF NOT EXISTS keyspace1.standard1 (key blob PRIMARY KEY, \"C0\" blob, \"C1\" blob, \"C2\" blob, \"C3\" blob, \"C4\" blob, \"C5\" blob, \"C6\" blob, \"C7\" blob) WITH tablets = {'min_per_shard_tablet_count': 10};",
   "CREATE KEYSPACE IF NOT EXISTS ks_truncate WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 3};",
-  "CREATE TABLE IF NOT EXISTS ks_truncate.standard1 (key blob PRIMARY KEY, \"C0\" blob, \"C1\" blob, \"C2\" blob, \"C3\" blob, \"C4\" blob, \"C5\" blob, \"C6\" blob, \"C7\" blob) WITH tablets = {'min_per_shard_tablet_count': 10};",
+  "CREATE TABLE IF NOT EXISTS ks_truncate.standard1 (key blob PRIMARY KEY, \"C0\" blob, \"C1\" blob, \"C2\" blob, \"C3\" blob, \"C4\" blob, \"C5\" blob, \"C6\" blob, \"C7\" blob) WITH tablets = {'min_per_shard_tablet_count': 10} AND gc_grace_seconds = 15000 AND compaction = { 'class': 'TimeWindowCompactionStrategy', 'compaction_window_size': 10, 'compaction_window_unit': 'MINUTES' } AND tombstone_gc = {'mode':'immediate'};",
+]
+
+post_prepare_cql_cmds: [
+  "TRUNCATE TABLE ks_truncate.standard1 USING TIMEOUT 600s;"
 ]
 
 stress_cmd: [
-  "cassandra-stress read no-warmup cl=QUORUM  duration=30m -schema 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=150 fixed=3300/s' -col 'size=FIXED(128) n=FIXED(8)' -pop 'dist=gauss(1..720000000,360000000,7200000)'",
+  "cassandra-stress mixed no-warmup cl=QUORUM duration=480m -schema 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=100 fixed=30000/s' -col 'size=FIXED(128) n=FIXED(8)' -pop 'dist=gauss(1..720000000,360000000,7200000)'"
 ]
 
 n_db_nodes: 3
@@ -27,7 +31,7 @@ instance_type_loader: 'c6i.2xlarge'
 n_monitor_nodes: 1
 instance_type_monitor: 't3.large'
 
-nemesis_class_name: 'TruncateMonkey'
+nemesis_class_name: 'NoOpMonkey'
 nemesis_during_prepare: false
 nemesis_interval: 60
 

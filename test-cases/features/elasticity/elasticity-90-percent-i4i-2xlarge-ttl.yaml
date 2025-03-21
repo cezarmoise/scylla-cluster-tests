@@ -13,7 +13,7 @@ pre_create_keyspace: [
 ]
 
 stress_cmd: [
-  "cassandra-stress read no-warmup cl=QUORUM  duration=480m -schema 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=150 fixed=3300/s' -col 'size=FIXED(128) n=FIXED(8)' -pop 'dist=gauss(1..720000000,360000000,7200000)'",
+  "cassandra-stress mixed no-warmup cl=QUORUM duration=480m -schema 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=100 fixed=30000/s' -col 'size=FIXED(128) n=FIXED(8)' -pop 'dist=gauss(1..720000000,360000000,7200000)'"
 ]
 
 n_db_nodes: 3
