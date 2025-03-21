@@ -29,7 +29,7 @@ instance_type_monitor: 't3.large'
 
 nemesis_class_name: 'NoOpMonkey'
 nemesis_during_prepare: false
-nemesis_interval: 30
+nemesis_interval: 10
 
 user_prefix: 'elasticity-test'
 
