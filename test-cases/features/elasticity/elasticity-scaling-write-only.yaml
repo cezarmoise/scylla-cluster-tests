@@ -1,0 +1,36 @@
+test_duration: 6000
+prepare_write_cmd: [
+  "cassandra-stress write no-warmup cl=QUORUM n=110000000 -schema keyspace=keyspace_read 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate threads=200 -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..110000000",
+  "cassandra-stress write no-warmup cl=QUORUM n=110000000 -schema keyspace=keyspace_read 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate threads=200 -col 'size=FIXED(128) n=FIXED(8)' -pop seq=110000001..220000000",
+  "cassandra-stress write no-warmup cl=QUORUM n=110000000 -schema keyspace=keyspace_read 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate threads=200 -col 'size=FIXED(128) n=FIXED(8)' -pop seq=220000001..330000000",
+]
+
+stress_cmd: [
+  "cassandra-stress write no-warmup cl=QUORUM n=1920000000 -schema keyspace=keyspace_name 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=100 fixed=2000/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..1920000000",
+  "cassandra-stress write no-warmup cl=QUORUM n=1920000000 -schema keyspace=keyspace_name 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=100 fixed=2000/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1920000001..3840000000",
+  "cassandra-stress write no-warmup cl=QUORUM n=1920000000 -schema keyspace=keyspace_name 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=100 fixed=2000/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=3840000001..5760000000",
+]
+
+n_db_nodes: 3
+simulated_racks: 3
+instance_type_db: 'i4i.large'
+
+n_loaders: 3
+instance_type_loader: 'c6i.2xlarge'
+
+n_monitor_nodes: 1
+instance_type_monitor: 't3.large'
+
+user_prefix: 'elasticity-test'
+
+round_robin: true
+append_scylla_args: '--logger-log-level load_balancer=debug --blocked-reactor-notify-ms 5 --abort-on-lsa-bad-alloc 1 --abort-on-seastar-bad-alloc --abort-on-internal-error 1 --abort-on-ebadf 1'
+backtrace_decoding: false
+print_kernel_callstack: true
+parallel_node_operations: true
+
+stress_image:
+  cassandra-stress: 'scylladb/cassandra-stress:3.17.5'
+
+append_scylla_yaml:
+  enable_tablets: true
