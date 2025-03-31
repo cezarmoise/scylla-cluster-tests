@@ -62,21 +62,17 @@ class LongevityScalingTest(LongevityTest):
     def write_data(self, stress_queue: list[CassandraStressThread], idx: int):
         keyspace_num = self.params.get("keyspace_num")
         round_robin = self.params.get("round_robin")
-        stress_cmd = self.params.get("prepare_write_cmd")
-        pre_create_keyspace_cmds = self.params.get('pre_create_keyspace')
+        stress_cmd = self.params.get("stress_cmd")
 
         if isinstance(stress_cmd, str):
             stress_cmd = [stress_cmd]
-        stress_cmd = [cmd.replace("keyspace_name", f"keyspace{idx}") for cmd in stress_cmd]
-        if isinstance(pre_create_keyspace_cmds, str):
-            pre_create_keyspace_cmds = [pre_create_keyspace_cmds]
-        pre_create_keyspace_cmds = [cmd.replace("keyspace_name", f"keyspace{idx}") for cmd in pre_create_keyspace_cmds]
+        stress_cmd = [cmd.replace("keyspace_name", f"keyspace_write_{idx}") for cmd in stress_cmd]
 
-        self._run_cql_commands(pre_create_keyspace_cmds)
         params = {"keyspace_num": keyspace_num, "stress_cmd": stress_cmd, "round_robin": round_robin}
         self._run_all_stress_cmds(stress_queue, params)
 
     def scale_out(self, instance_type: str) -> list[BaseNode]:
+        self.log.info(f"SCALING CLUSTER: started adding {self.db_cluster.racks_count} x {instance_type}")
         added_nodes = self.db_cluster.add_nodes(count=self.db_cluster.racks_count,
                                                 instance_type=instance_type, enable_auto_bootstrap=True, rack=None)
         self.monitors.reconfigure_scylla_monitoring()
@@ -86,14 +82,24 @@ class LongevityScalingTest(LongevityTest):
         self.db_cluster.set_seeds()
         self.db_cluster.update_seed_provider()
         self.db_cluster.wait_for_nodes_up_and_normal(nodes=added_nodes)
+        self.log.info(f"SCALING CLUSTER: done adding {self.db_cluster.racks_count} x {instance_type}")
         return added_nodes
 
     def scale_in(self, nodes: list[BaseNode]):
         num_workers = None if (self.db_cluster.parallel_node_operations and nodes[0].raft.is_enabled) else 1
         parallel_obj = ParallelObject(objects=nodes, timeout=MAX_TIME_WAIT_FOR_DECOMMISSION, num_workers=num_workers)
-        decommission = lambda node: self.db_cluster.decommission(node)
-        parallel_obj.run(decommission, ignore_exceptions=False, unpack_objects=True)
+
+        def _decommission(node: BaseNode):
+            try:
+                self.log.info(f'SCALING CLUSTER: started decommissioning a node {node}')
+                self.db_cluster.decommission(node)
+                self.log.info(f'SCALING CLUSTER: done decommissioning a node {node}')
+            except Exception as exc:  # pylint: disable=broad-except  # noqa: BLE001
+                self.log.error(f'SCALING CLUSTER: failed decommissioning a node {node}', exc_info=exc)
+                raise
+        parallel_obj.run(_decommission, ignore_exceptions=False, unpack_objects=True)
         self.monitors.reconfigure_scylla_monitoring()
+        self.log.info(f"SCALING CLUSTER: done decommissioning {len(nodes)} nodes")
 
     def get_nodes_to_remove(self, live_nodes, instance_types_to_remove):
         nodes_to_remove = []
@@ -108,7 +114,7 @@ class LongevityScalingTest(LongevityTest):
         return nodes_to_remove
 
     def test_cluster_scaling(self):
-        self.run_pre_create_keyspace()
+        self.run_prepare_write_cmd()
         stress_queue = []
         idx = 0
         self.write_data(stress_queue, idx)
@@ -117,11 +123,20 @@ class LongevityScalingTest(LongevityTest):
         live_nodes = self.db_cluster.nodes[:]
 
         while not all("i4i.8xlarge" == get_instance_type(node) for node in live_nodes):
-            if any(get_node_disk_usage(node) > 90 for node in live_nodes):
+            usages = {node: get_node_disk_usage(node) for node in self.db_cluster.nodes}
+            self.log.info("SCALING CLUSTER: " + ", ".join(f"{k.name}: {v}%" for k, v in usages.items()))
+
+            if any(u > 98 for u in usages.values()):
+                self.log.info("SCALING CLUSTER: stop test when one node reaches 98%")
+                break
+
+            if any(u > 90 for u in usages.values()):
                 idx += 1
                 node_types_in_rack = [get_instance_type(node) for node in live_nodes if node.rack == live_nodes[0].rack]
                 instance_type_to_add, instance_types_to_remove = upgrade_cluster(
                     node_types_in_rack, min_nodes=min_nodes_per_rack)
+
+                self.log.info(f"SCALING CLUSTER: +{instance_type_to_add} -{instance_types_to_remove}")
 
                 # add new nodes
                 live_nodes.extend(self.scale_out(instance_type_to_add))
@@ -134,7 +149,12 @@ class LongevityScalingTest(LongevityTest):
                     threading.Thread(target=self.scale_in, args=(nodes_to_remove,), daemon=True).start()
                     live_nodes = [node for node in live_nodes if node not in nodes_to_remove]
 
-            time.sleep(600)
+            time.sleep(60)
+            # sleep more if all under 80%
+            if all(u < 85 for u in usages.values()):
+                time.sleep(300)
+            if all(u < 80 for u in usages.values()):
+                time.sleep(300)
 
         with EventsSeverityChangerFilter(
             new_severity=Severity.NORMAL,  # killing stress creates Critical error
