@@ -5,11 +5,6 @@ prepare_write_cmd: [
   "cassandra-stress write no-warmup cl=QUORUM n=120000000 -schema keyspace=keyspace0 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=100 fixed=10000/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=240000001..360000000",
 ]
 
-pre_create_keyspace: [
-  "CREATE KEYSPACE IF NOT EXISTS keyspace0 WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 3};",
-  "CREATE TABLE IF NOT EXISTS keyspace0.standard1 (key blob PRIMARY KEY, \"C0\" blob, \"C1\" blob, \"C2\" blob, \"C3\" blob, \"C4\" blob, \"C5\" blob, \"C6\" blob, \"C7\" blob) WITH tablets = {'min_per_shard_tablet_count': 128};",
-]
-
 stress_cmd: [
   "cassandra-stress mixed no-warmup cl=QUORUM  duration=6000m -schema keyspace=keyspace0 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=100 fixed=3300/s' -col 'size=FIXED(128) n=FIXED(8)' -pop 'dist=gauss(1..1000,50,10)'",
   "cassandra-stress mixed no-warmup cl=QUORUM  duration=6000m -schema keyspace=keyspace0 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=100 fixed=3300/s' -col 'size=FIXED(128) n=FIXED(8)' -pop 'dist=gauss(1..1000,50,10)'",

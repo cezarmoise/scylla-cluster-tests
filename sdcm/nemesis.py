@@ -4495,12 +4495,8 @@ class Nemesis:  # pylint: disable=too-many-instance-attributes,too-many-public-m
 
         def write_data(n):
             stress_cmds = self.cluster.params.get('stress_cmd_w')
-            pre_cmds = self.cluster.params.get('pre_create_keyspace')
             write_threads = []
             for stress_cmd in stress_cmds:
-                for pre_cmd in pre_cmds:
-                    with self.cluster.cql_connection_patient(self.target_node, connect_timeout=600) as session:
-                        session.execute(SimpleStatement(pre_cmd.replace("keyspace0", f"keyspace{n}")), timeout=300)
                 write_threads.append(self.tester.run_stress_thread(
                     stress_cmd=stress_cmd.replace("keyspace0", f"keyspace{n}"), stop_test_on_failure=False, stats_aggregate_cmds=False, round_robin=True))
             for write_thread in write_threads:
