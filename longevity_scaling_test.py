@@ -123,7 +123,7 @@ class LongevityScalingTest(LongevityTest):
         live_nodes = self.db_cluster.nodes[:]
 
         while not all("i4i.8xlarge" == get_instance_type(node) for node in live_nodes):
-            usages = {node: get_node_disk_usage(node) for node in self.db_cluster.nodes}
+            usages = {node: get_node_disk_usage(node) for node in live_nodes}
             self.log.info("SCALING CLUSTER: " + ", ".join(f"{k.name}: {v}%" for k, v in usages.items()))
 
             if any(u > 98 for u in usages.values()):
@@ -141,16 +141,20 @@ class LongevityScalingTest(LongevityTest):
                 # add new nodes
                 live_nodes.extend(self.scale_out(instance_type_to_add))
 
-                # start new stress writes to keep load the same
-                self.write_data(stress_queue, idx)
-
                 # remove nodes if necessary
-                if nodes_to_remove := self.get_nodes_to_remove(live_nodes, instance_types_to_remove):
+                for instance_type_to_remove in instance_types_to_remove:
+                    # remove one instance type at a time so racks don't differ by more than 1 node
+                    nodes_to_remove = self.get_nodes_to_remove(live_nodes, [instance_type_to_remove])
                     threading.Thread(target=self.scale_in, args=(nodes_to_remove,), daemon=True).start()
                     live_nodes = [node for node in live_nodes if node not in nodes_to_remove]
 
+                # start new stress writes to keep load the same
+                time.sleep(300)
+                self.write_data(stress_queue, idx)
+                self.log.info(f"SCALING CLUSTER: started stress #{idx}")
+
             time.sleep(60)
-            # sleep more if all under 80%
+            # sleep more if not close to 90%
             if all(u < 85 for u in usages.values()):
                 time.sleep(300)
             if all(u < 80 for u in usages.values()):
