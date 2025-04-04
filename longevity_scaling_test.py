@@ -12,7 +12,6 @@
 # See LICENSE for more details.
 #
 # Copyright (c) 2025 ScyllaDB
-import threading
 import time
 from longevity_test import LongevityTest
 from sdcm.cluster import MAX_TIME_WAIT_FOR_DECOMMISSION, MAX_TIME_WAIT_FOR_NEW_NODE_UP, BaseNode
@@ -145,11 +144,10 @@ class LongevityScalingTest(LongevityTest):
                 for instance_type_to_remove in instance_types_to_remove:
                     # remove one instance type at a time so racks don't differ by more than 1 node
                     nodes_to_remove = self.get_nodes_to_remove(live_nodes, [instance_type_to_remove])
-                    threading.Thread(target=self.scale_in, args=(nodes_to_remove,), daemon=True).start()
+                    self.scale_in(nodes_to_remove)
                     live_nodes = [node for node in live_nodes if node not in nodes_to_remove]
 
                 # start new stress writes to keep load the same
-                time.sleep(300)
                 self.write_data(stress_queue, idx)
                 self.log.info(f"SCALING CLUSTER: started stress #{idx}")
 
