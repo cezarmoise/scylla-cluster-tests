@@ -28,3 +28,6 @@ append_scylla_args: '--logger-log-level load_balancer=debug --blocked-reactor-no
 backtrace_decoding: false
 print_kernel_callstack: true
 parallel_node_operations: true
+
+stress_image:
+  cassandra-stress: 'scylladb/cassandra-stress:3.17.5'

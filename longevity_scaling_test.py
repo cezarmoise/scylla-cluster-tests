@@ -126,10 +126,13 @@ class LongevityScalingTest(LongevityTest):
             self.log.info("SCALING CLUSTER: " + ", ".join(f"{k.name}: {v}%" for k, v in usages.items()))
 
             if any(u > 98 for u in usages.values()):
-                self.log.info("SCALING CLUSTER: stop test when one node reaches 98%")
+                self.log.error("SCALING CLUSTER: stop test when one node reaches 98%")
                 break
 
             if any(u > 90 for u in usages.values()):
+                if any(u < 70 for u in usages.values()):
+                    self.log.error("SCALING CLUSTER: stop test due to balancing issues")
+                    break
                 idx += 1
                 node_types_in_rack = [get_instance_type(node) for node in live_nodes if node.rack == live_nodes[0].rack]
                 instance_type_to_add, instance_types_to_remove = upgrade_cluster(
