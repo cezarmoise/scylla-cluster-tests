@@ -31,3 +31,6 @@ parallel_node_operations: true
 
 stress_image:
   cassandra-stress: 'scylladb/cassandra-stress:3.17.5'
+
+append_scylla_yaml:
+  enable_tablets: true
