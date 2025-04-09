@@ -22,6 +22,7 @@ from sdcm.sct_events.loaders import CassandraStressEvent
 from sdcm.stress_thread import CassandraStressThread
 from sdcm.utils.adaptive_timeouts import Operations, adaptive_timeout
 from sdcm.utils.common import ParallelObject
+from sdcm.utils.tablets.common import wait_no_tablets_migration_running
 
 instance_size_map = {"i4i.large": 1, "i4i.xlarge": 2, "i4i.2xlarge": 4, "i4i.4xlarge": 8, "i4i.8xlarge": 16}
 
@@ -149,6 +150,10 @@ class LongevityScalingTest(LongevityTest):
                     nodes_to_remove = self.get_nodes_to_remove(live_nodes, [instance_type_to_remove])
                     self.scale_in(nodes_to_remove)
                     live_nodes = [node for node in live_nodes if node not in nodes_to_remove]
+
+                # wait for tablet migration to finish
+                for node in live_nodes:
+                    wait_no_tablets_migration_running(node)
 
                 # start new stress writes to keep load the same
                 self.write_data(stress_queue, idx)
