@@ -144,6 +144,10 @@ class LongevityScalingTest(LongevityTest):
                 # add new nodes
                 live_nodes.extend(self.scale_out(instance_type_to_add))
 
+                # wait for tablet migration to finish
+                for node in live_nodes:
+                    wait_no_tablets_migration_running(node)
+
                 # remove nodes if necessary
                 for instance_type_to_remove in instance_types_to_remove:
                     # remove one instance type at a time so racks don't differ by more than 1 node
