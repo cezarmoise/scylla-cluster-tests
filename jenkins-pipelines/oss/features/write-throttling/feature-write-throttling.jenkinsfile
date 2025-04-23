@@ -7,7 +7,7 @@ longevityPipeline(
     backend: "aws",
     region: 'eu-west-1',
     availability_zone: 'a',
-    test_name: 'longevity_oos_test.LongevityOutOfSpaceTest.test_oos_scale_out',
-    test_config: """["test-cases/features/write-throttling/write-throttling-i4i-large.yaml", "configurations/disable_kms.yaml"]""",
+    test_name: 'longevity_oos_test.LongevityOutOfSpaceTest.test_oos_write_scale_out',
+    test_config: """["test-cases/features/write-throttling/write-throttling-write-scale-out.yaml", "configurations/disable_kms.yaml"]""",
     provision_type: 'on_demand',
 )
