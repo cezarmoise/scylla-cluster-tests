@@ -15,10 +15,11 @@
 from contextlib import ExitStack, contextmanager
 from time import sleep
 from longevity_test import LongevityTest
-from sdcm.cluster import MAX_TIME_WAIT_FOR_NEW_NODE_UP, BaseNode
+from sdcm.cluster import MAX_TIME_WAIT_FOR_NEW_NODE_UP
 from sdcm.sct_events import Severity
 from sdcm.sct_events.filters import EventsSeverityChangerFilter
 from sdcm.sct_events.loaders import CassandraStressEvent, CassandraStressLogEvent
+from sdcm.sct_events.system import TestFrameworkEvent
 from sdcm.utils.adaptive_timeouts import Operations, adaptive_timeout
 from sdcm.utils.context_managers import DbNodeLogger
 from sdcm.utils.nemesis_utils.indexes import verify_query_by_index_works, wait_for_index_to_be_built
@@ -81,7 +82,7 @@ class LongevityOutOfSpaceTest(LongevityTest):
         stress_queue = []
         self._run_all_stress_cmds(stress_queue, params)
 
-    def scale_out(self) -> list[BaseNode]:
+    def scale_out(self):
         instance_type = self.params.get("instance_type_db")
         added_nodes = self.db_cluster.add_nodes(count=self.db_cluster.racks_count,
                                                 instance_type=instance_type, enable_auto_bootstrap=True, rack=None)
@@ -92,7 +93,8 @@ class LongevityOutOfSpaceTest(LongevityTest):
         self.db_cluster.set_seeds()
         self.db_cluster.update_seed_provider()
         self.db_cluster.wait_for_nodes_up_and_normal(nodes=added_nodes)
-        return added_nodes
+        for node in self.db_cluster.nodes:
+            wait_no_tablets_migration_running(node)
 
     def test_oos_write_scale_out(self):
         self.run_prepare_write_cmd()
@@ -104,8 +106,6 @@ class LongevityOutOfSpaceTest(LongevityTest):
 
         sleep(600)
         self.scale_out()
-        for node in self.db_cluster.nodes:
-            wait_no_tablets_migration_running(node)
 
         sleep(600)
         self.write_data()
@@ -128,9 +128,11 @@ class LongevityOutOfSpaceTest(LongevityTest):
         try:
             with adaptive_timeout(operation=Operations.CREATE_INDEX, node=node, timeout=3600) as timeout:
                 wait_for_index_to_be_built(node, ks, index_name, timeout=timeout * 2)
+            TestFrameworkEvent(source={self.__class__.__name__},
+                               message="Index creation should not finish.",
+                               severity=Severity.CRITICAL).publish()
         except TimeoutError:
-            # index creation will not finish due to lack of space
-            pass
+            self.log.info(f"Index {index_name} creation timed out as expected")
 
         sleep(600)
         self.scale_out()
@@ -138,6 +140,25 @@ class LongevityOutOfSpaceTest(LongevityTest):
             wait_no_tablets_migration_running(node)
 
         sleep(600)
+        with adaptive_timeout(operation=Operations.CREATE_INDEX, node=node, timeout=3600) as timeout:
+            wait_for_index_to_be_built(node, ks, index_name, timeout=timeout * 2)
+        verify_query_by_index_works(session, ks, cf, column)
+
+    def test_index(self):
+        self.run_prepare_write_cmd()
+
+        self.scale_out()
+
+        # create index
+        ks = "keyspace1"
+        cf = "standard1"
+        column = "C0"
+        index_name = f"{cf}_{column}_oos"
+        node = self.db_cluster.nodes[0]
+        with DbNodeLogger(self.db_cluster.nodes, "create index", target_node=node, additional_info=f"on {ks}.{cf}.{column}"):
+            with self.db_cluster.cql_connection_patient(node, connect_timeout=300) as session:
+                session.execute(f'CREATE INDEX {index_name} ON {ks}.{cf}("{column}")', timeout=600)
+
         with adaptive_timeout(operation=Operations.CREATE_INDEX, node=node, timeout=3600) as timeout:
             wait_for_index_to_be_built(node, ks, index_name, timeout=timeout * 2)
         verify_query_by_index_works(session, ks, cf, column)
