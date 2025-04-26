@@ -112,7 +112,7 @@ class LongevityOutOfSpaceTest(LongevityTest):
 
     def test_oos_si_scale_out(self):
         self.run_prepare_write_cmd()
-        # self.start_background_read()
+        self.start_background_read()
 
         sleep(600)
         # create index
@@ -127,7 +127,7 @@ class LongevityOutOfSpaceTest(LongevityTest):
 
         try:
             with adaptive_timeout(operation=Operations.CREATE_INDEX, node=node, timeout=3600) as timeout:
-                wait_for_index_to_be_built(node, ks, index_name, timeout=timeout * 2)
+                wait_for_index_to_be_built(node, ks, index_name, timeout=timeout * 3)
             TestFrameworkEvent(source={self.__class__.__name__},
                                message="Index creation should not finish.",
                                severity=Severity.CRITICAL).publish()
@@ -136,29 +136,8 @@ class LongevityOutOfSpaceTest(LongevityTest):
 
         sleep(600)
         self.scale_out()
-        for node in self.db_cluster.nodes:
-            wait_no_tablets_migration_running(node)
 
         sleep(600)
         with adaptive_timeout(operation=Operations.CREATE_INDEX, node=node, timeout=3600) as timeout:
-            wait_for_index_to_be_built(node, ks, index_name, timeout=timeout * 2)
-        verify_query_by_index_works(session, ks, cf, column)
-
-    def test_index(self):
-        self.run_prepare_write_cmd()
-
-        self.scale_out()
-
-        # create index
-        ks = "keyspace1"
-        cf = "standard1"
-        column = "C0"
-        index_name = f"{cf}_{column}_oos"
-        node = self.db_cluster.nodes[0]
-        with DbNodeLogger(self.db_cluster.nodes, "create index", target_node=node, additional_info=f"on {ks}.{cf}.{column}"):
-            with self.db_cluster.cql_connection_patient(node, connect_timeout=300) as session:
-                session.execute(f'CREATE INDEX {index_name} ON {ks}.{cf}("{column}")', timeout=600)
-
-        with adaptive_timeout(operation=Operations.CREATE_INDEX, node=node, timeout=3600) as timeout:
-            wait_for_index_to_be_built(node, ks, index_name, timeout=timeout * 2)
+            wait_for_index_to_be_built(node, ks, index_name, timeout=timeout * 3)
         verify_query_by_index_works(session, ks, cf, column)

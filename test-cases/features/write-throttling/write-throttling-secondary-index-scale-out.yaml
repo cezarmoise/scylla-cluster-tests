@@ -1,12 +1,12 @@
 test_duration: 720
 prepare_write_cmd: [
-  "cassandra-stress write no-warmup cl=QUORUM n=120000000 -schema keyspace=keyspace0 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=200' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..120000000",
-  "cassandra-stress write no-warmup cl=QUORUM n=120000000 -schema keyspace=keyspace1 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=200' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..120000000",
-  "cassandra-stress write no-warmup cl=QUORUM n=120000000 -schema keyspace=keyspace2 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=200' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..120000000",
+  "cassandra-stress write no-warmup cl=QUORUM n=125000000 -schema keyspace=keyspace1 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=200' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..125000000",
+  "cassandra-stress write no-warmup cl=QUORUM n=125000000 -schema keyspace=keyspace1 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=200' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=125000001..250000000",
+  "cassandra-stress write no-warmup cl=QUORUM n=125000000 -schema keyspace=keyspace1 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=200' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=250000001..375000000",
 ]
 
 stress_cmd_r: [
-  "cassandra-stress read no-warmup cl=QUORUM duration=180m -schema keyspace=keyspace0 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=10 fixed=300/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..120000000",
+  "cassandra-stress read no-warmup cl=QUORUM duration=180m -schema keyspace=keyspace1 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=10 fixed=300/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..120000000",
 ]
 
 n_db_nodes: 3
