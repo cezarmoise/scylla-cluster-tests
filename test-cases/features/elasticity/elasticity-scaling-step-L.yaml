@@ -1,0 +1,38 @@
+test_duration: 1200
+stress_cmd_w: [
+  "cassandra-stress write no-warmup cl=QUORUM n=2000000000 -schema keyspace=keyspace1 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=200 fixed=6000/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..2000000000",
+  "cassandra-stress write no-warmup cl=QUORUM n=2000000000 -schema keyspace=keyspace2 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=200 fixed=6000/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..2000000000",
+  "cassandra-stress write no-warmup cl=QUORUM n=2000000000 -schema keyspace=keyspace3 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=200 fixed=6000/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..2000000000",
+]
+
+stress_cmd: [
+  "cassandra-stress read no-warmup cl=QUORUM duration=900m -schema keyspace=keyspace1 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=100 fixed=1500/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..100000000",
+  "cassandra-stress read no-warmup cl=QUORUM duration=900m -schema keyspace=keyspace2 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=100 fixed=1500/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..100000000",
+  "cassandra-stress read no-warmup cl=QUORUM duration=900m -schema keyspace=keyspace3 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=100 fixed=1500/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..100000000",
+
+  "cassandra-stress write no-warmup cl=QUORUM n=2000000000 -schema keyspace=keyspace4 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=100 fixed=1500/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..2000000000",
+  "cassandra-stress write no-warmup cl=QUORUM n=2000000000 -schema keyspace=keyspace5 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=100 fixed=1500/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..2000000000",
+  "cassandra-stress write no-warmup cl=QUORUM n=2000000000 -schema keyspace=keyspace6 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=100 fixed=1500/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..2000000000",
+]
+
+n_db_nodes: 3
+simulated_racks: 3
+instance_type_db: 'i4i.large'
+
+n_loaders: 3
+instance_type_loader: 'c6i.2xlarge'
+
+n_monitor_nodes: 1
+instance_type_monitor: 't3.large'
+
+user_prefix: 'elasticity-test'
+
+round_robin: true
+append_scylla_args: '--blocked-reactor-notify-ms 5 --abort-on-lsa-bad-alloc 1 --abort-on-seastar-bad-alloc --abort-on-internal-error 1 --abort-on-ebadf 1'
+backtrace_decoding: false
+print_kernel_callstack: true
+parallel_node_operations: true
+
+append_scylla_yaml:
+  enable_tablets: true
+  tablets_mode_for_new_keyspaces: 'enabled'
