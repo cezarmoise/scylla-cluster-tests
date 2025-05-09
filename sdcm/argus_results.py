@@ -10,6 +10,7 @@
 # See LICENSE for more details.
 #
 # Copyright (c) 2024 ScyllaDB
+from contextlib import contextmanager
 import json
 import logging
 import time
@@ -423,3 +424,22 @@ def send_iotune_results_to_argus(argus_client: ArgusClient, results: dict, node,
                          value=value, status=Status.PASS if value < 15 else Status.WARNING)
 
     submit_results_to_argus(argus_client, table)
+
+
+@contextmanager
+def timer_results_to_argus(label: str, argus_client: ArgusClient):
+    start = time.time()
+    yield
+    elapsed = int(time.time() - start)
+
+    class TimerResult(GenericResultTable):
+        class Meta:
+            name = "Timer"
+            description = "The duration of the operation named in the row name"
+            Columns = [
+                ColumnMetadata(name="duration", unit="HH:MM:SS", type=ResultType.DURATION, higher_is_better=False),
+            ]
+
+    data_table = TimerResult()
+    data_table.add_result(column="duration", row=label, value=elapsed, status=Status.UNSET)
+    submit_results_to_argus(argus_client, data_table)
