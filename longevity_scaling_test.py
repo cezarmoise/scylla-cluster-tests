@@ -12,12 +12,16 @@
 # See LICENSE for more details.
 #
 # Copyright (c) 2025 ScyllaDB
+from datetime import timedelta
 import re
 import time
 from longevity_test import LongevityTest
+from scylla_manager_performance_test import ManagerBackupRestoreConcurrentTests
+from sdcm import mgmt
 from sdcm.argus_results import timer_results_to_argus
 from sdcm.cluster import MAX_TIME_WAIT_FOR_DECOMMISSION, MAX_TIME_WAIT_FOR_NEW_NODE_UP, BaseNode
 from sdcm.cluster_aws import AWSNode
+from sdcm.mgmt.common import ObjectStorageUploadMode
 from sdcm.sct_events import Severity
 from sdcm.sct_events.filters import EventsSeverityChangerFilter
 from sdcm.sct_events.loaders import CassandraStressEvent
@@ -26,6 +30,7 @@ from sdcm.stress_thread import CassandraStressThread
 from sdcm.utils.adaptive_timeouts import Operations, adaptive_timeout
 from sdcm.utils.common import ParallelObject
 from sdcm.utils.tablets.common import wait_no_tablets_migration_running
+from threading import Thread
 
 instance_size_map = {"i4i.large": 1, "i4i.xlarge": 2, "i4i.2xlarge": 4, "i4i.4xlarge": 8, "i4i.8xlarge": 16}
 
@@ -72,7 +77,7 @@ def multiply_rate(stress_cmd: str, rate_multiplier: int) -> str:
     return re.sub(r"fixed=\d+/s", f"fixed={rate * rate_multiplier}/s", stress_cmd)
 
 
-class LongevityScalingTest(LongevityTest):
+class LongevityScalingTest(LongevityTest, ManagerBackupRestoreConcurrentTests):
     def run_stress(self, stress_queue: list[CassandraStressThread], cmd_name: str):
         """
         Run the stress command with the given name
@@ -283,6 +288,91 @@ class LongevityScalingTest(LongevityTest):
                 # remove biggest instance type first
                 nodes_to_remove = self.get_nodes_to_remove(self.db_cluster.nodes, instance_types_to_remove)
                 self.scale_in(nodes_to_remove)
+
+        # killing background load creates to end the test
+        with EventsSeverityChangerFilter(new_severity=Severity.NORMAL, event_class=CassandraStressEvent, extra_time_to_expiration=60):
+            self.loaders.kill_stress_thread()
+
+    def test_scaling_single_step_with_backup(self):
+        """
+        Test a single step of scaling
+
+        The test looks at `instance_type_db` and fills the cluster with smaller instance types
+        Then it scales out with a bigger instance type and removes the smaller instance types
+        Runs a backup during scaling
+        """
+        background_stress_queue: list[CassandraStressThread] = []
+        fill_stress_queue: list[CassandraStressThread] = []
+        argus_client = self.test_config.argus_client()
+        self.db_cluster.add_nemesis(nemesis=self.get_nemesis_class(), tester_obj=self)
+
+        # add instances smaller than the current one
+        for instance_type in instance_size_map.keys():
+            if instance_size_map[instance_type] < instance_size_map[self.params.get('instance_type_db')]:
+                self.log.info(f"SCALING CLUSTER: +{instance_type}")
+                self.scale_out(instance_type)
+
+        self.log.info("SCALING CLUSTER: starting fill load")
+        self.start_fill_load(fill_stress_queue)
+
+        # stop load at 90%
+        while True:
+            usages = {node: get_node_disk_usage(node) for node in self.db_cluster.nodes}
+            if any(u > 90 for u in usages.values()):
+                self.log.info("SCALING CLUSTER: killing fill load")
+                with EventsSeverityChangerFilter(new_severity=Severity.NORMAL, event_class=CassandraStressEvent, extra_time_to_expiration=60):
+                    for stress in fill_stress_queue:
+                        stress.kill()
+                break
+            time.sleep(60)
+
+        # sleep a little to let the cluster stabilize
+        time.sleep(900)
+
+        # start nemesis
+        self.db_cluster.start_nemesis()
+
+        # start background load
+        self.log.info("SCALING CLUSTER: start background load")
+        self.start_background_load(background_stress_queue)
+
+        # create a backup before scaling
+        self.log.info("SCALING CLUSTER: creating a backup before scaling")
+        timeout = int(timedelta(hours=14).total_seconds())
+
+        def run_backup_in_background():
+            manager_tool = mgmt.get_scylla_manager_tool(manager_node=self.monitors.nodes[0])
+            mgr_cluster = self.ensure_and_get_cluster(manager_tool)
+
+            self.manager_backup_and_report(mgr_cluster=mgr_cluster, label="Native Backup", delete_snapshot=True,
+                                           object_storage_upload_mode=ObjectStorageUploadMode.NATIVE,
+                                           timeout=timeout)
+
+        backup_thread = Thread(target=run_backup_in_background)
+        backup_thread.start()
+
+        current_instance_types = [get_instance_type(node)
+                                  for node in list(self.db_cluster.nodes_by_racks_idx_and_regions().values())[0]]
+        instance_type_to_add, instance_types_to_remove = upgrade_cluster(current_instance_types, min_nodes=1)
+        self.log.info(f"SCALING CLUSTER: {current_instance_types=}")
+        self.log.info(f"SCALING CLUSTER: {instance_type_to_add=}")
+        self.log.info(f"SCALING CLUSTER: {instance_types_to_remove=}")
+        with timer_results_to_argus(f"Scaling: +{instance_type_to_add} -{' - '.join(instance_types_to_remove)}", argus_client):
+            # scale out with bigger instance type
+            self.scale_out(instance_type_to_add)
+
+            # wait for tablet migration to finish
+            for node in self.db_cluster.nodes:
+                wait_no_tablets_migration_running(node)
+
+            if instance_types_to_remove:
+                # remove one instance type at a time so racks don't differ by more than 1 node
+                # remove biggest instance type first
+                nodes_to_remove = self.get_nodes_to_remove(self.db_cluster.nodes, instance_types_to_remove)
+                self.scale_in(nodes_to_remove)
+
+        # wait for the backup to finish
+        backup_thread.join(timeout=timeout)
 
         # killing background load creates to end the test
         with EventsSeverityChangerFilter(new_severity=Severity.NORMAL, event_class=CassandraStressEvent, extra_time_to_expiration=60):
