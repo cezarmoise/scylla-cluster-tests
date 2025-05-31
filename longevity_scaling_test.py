@@ -318,7 +318,7 @@ class LongevityScalingTest(LongevityTest, ManagerBackupRestoreConcurrentTests):
         # stop load at 90%
         while True:
             usages = {node: get_node_disk_usage(node) for node in self.db_cluster.nodes}
-            if any(u > 90 for u in usages.values()):
+            if any(u > 50 for u in usages.values()):
                 self.log.info("SCALING CLUSTER: killing fill load")
                 with EventsSeverityChangerFilter(new_severity=Severity.NORMAL, event_class=CassandraStressEvent, extra_time_to_expiration=60):
                     for stress in fill_stress_queue:
