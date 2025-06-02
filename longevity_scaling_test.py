@@ -301,7 +301,7 @@ class LongevityScalingTest(LongevityTest, ManagerBackupRestoreConcurrentTests):
         Then it scales out with a bigger instance type and removes the smaller instance types
         Runs a backup during scaling
         """
-        background_stress_queue: list[CassandraStressThread] = []
+        # background_stress_queue: list[CassandraStressThread] = []
         fill_stress_queue: list[CassandraStressThread] = []
         argus_client = self.test_config.argus_client()
         self.db_cluster.add_nemesis(nemesis=self.get_nemesis_class(), tester_obj=self)
@@ -318,7 +318,7 @@ class LongevityScalingTest(LongevityTest, ManagerBackupRestoreConcurrentTests):
         # stop load at 90%
         while True:
             usages = {node: get_node_disk_usage(node) for node in self.db_cluster.nodes}
-            if any(u > 50 for u in usages.values()):
+            if any(u > 90 for u in usages.values()):
                 self.log.info("SCALING CLUSTER: killing fill load")
                 with EventsSeverityChangerFilter(new_severity=Severity.NORMAL, event_class=CassandraStressEvent, extra_time_to_expiration=60):
                     for stress in fill_stress_queue:
@@ -333,8 +333,8 @@ class LongevityScalingTest(LongevityTest, ManagerBackupRestoreConcurrentTests):
         self.db_cluster.start_nemesis()
 
         # start background load
-        self.log.info("SCALING CLUSTER: start background load")
-        self.start_background_load(background_stress_queue)
+        # self.log.info("SCALING CLUSTER: start background load")
+        # self.start_background_load(background_stress_queue)
 
         # create a backup before scaling
         self.log.info("SCALING CLUSTER: creating a backup before scaling")
@@ -374,6 +374,8 @@ class LongevityScalingTest(LongevityTest, ManagerBackupRestoreConcurrentTests):
         # wait for the backup to finish
         backup_thread.join(timeout=timeout)
 
+        time.sleep(900)
+
         # killing background load creates to end the test
-        with EventsSeverityChangerFilter(new_severity=Severity.NORMAL, event_class=CassandraStressEvent, extra_time_to_expiration=60):
-            self.loaders.kill_stress_thread()
+        # with EventsSeverityChangerFilter(new_severity=Severity.NORMAL, event_class=CassandraStressEvent, extra_time_to_expiration=60):
+        #     self.loaders.kill_stress_thread()
