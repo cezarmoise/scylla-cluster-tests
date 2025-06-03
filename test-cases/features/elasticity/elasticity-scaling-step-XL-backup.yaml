@@ -10,9 +10,9 @@ stress_cmd: [
   "cassandra-stress read no-warmup cl=QUORUM duration=900m -schema keyspace=keyspace1 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=100 fixed=1500/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..100000000",
   "cassandra-stress read no-warmup cl=QUORUM duration=900m -schema keyspace=keyspace1 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=100 fixed=1500/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..100000000",
 
-  "cassandra-stress write no-warmup cl=QUORUM n=2000000000 -schema keyspace=keyspace4 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=100 fixed=1500/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..2000000000",
-  "cassandra-stress write no-warmup cl=QUORUM n=2000000000 -schema keyspace=keyspace5 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=100 fixed=1500/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..2000000000",
-  "cassandra-stress write no-warmup cl=QUORUM n=2000000000 -schema keyspace=keyspace6 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=100 fixed=1500/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..2000000000",
+  # "cassandra-stress write no-warmup cl=QUORUM n=2000000000 -schema keyspace=keyspace4 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=100 fixed=1500/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..2000000000",
+  # "cassandra-stress write no-warmup cl=QUORUM n=2000000000 -schema keyspace=keyspace5 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=100 fixed=1500/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..2000000000",
+  # "cassandra-stress write no-warmup cl=QUORUM n=2000000000 -schema keyspace=keyspace6 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=100 fixed=1500/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..2000000000",
 ]
 
 n_db_nodes: 3

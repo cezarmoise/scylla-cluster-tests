@@ -301,7 +301,7 @@ class LongevityScalingTest(LongevityTest, ManagerBackupRestoreConcurrentTests):
         Then it scales out with a bigger instance type and removes the smaller instance types
         Runs a backup during scaling
         """
-        # background_stress_queue: list[CassandraStressThread] = []
+        background_stress_queue: list[CassandraStressThread] = []
         fill_stress_queue: list[CassandraStressThread] = []
         argus_client = self.test_config.argus_client()
         self.db_cluster.add_nemesis(nemesis=self.get_nemesis_class(), tester_obj=self)
@@ -333,8 +333,8 @@ class LongevityScalingTest(LongevityTest, ManagerBackupRestoreConcurrentTests):
         self.db_cluster.start_nemesis()
 
         # start background load
-        # self.log.info("SCALING CLUSTER: start background load")
-        # self.start_background_load(background_stress_queue)
+        self.log.info("SCALING CLUSTER: start background load")
+        self.start_background_load(background_stress_queue)
 
         # create a backup before scaling
         self.log.info("SCALING CLUSTER: creating a backup before scaling")
@@ -377,5 +377,5 @@ class LongevityScalingTest(LongevityTest, ManagerBackupRestoreConcurrentTests):
         time.sleep(900)
 
         # killing background load creates to end the test
-        # with EventsSeverityChangerFilter(new_severity=Severity.NORMAL, event_class=CassandraStressEvent, extra_time_to_expiration=60):
-        #     self.loaders.kill_stress_thread()
+        with EventsSeverityChangerFilter(new_severity=Severity.NORMAL, event_class=CassandraStressEvent, extra_time_to_expiration=60):
+            self.loaders.kill_stress_thread()
