@@ -17,7 +17,7 @@ stress_cmd: [
 
 n_db_nodes: 3
 simulated_racks: 3
-instance_type_db: 'i4i.large'
+instance_type_db: 'i4i.4xlarge'
 
 n_loaders: 3
 instance_type_loader: 'c6i.2xlarge'
