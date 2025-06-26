@@ -13,11 +13,13 @@
 #
 # Copyright (c) 2025 ScyllaDB
 import re
+from threading import Thread
 import time
 from longevity_test import LongevityTest
 from sdcm.argus_results import timer_results_to_argus
 from sdcm.cluster import MAX_TIME_WAIT_FOR_DECOMMISSION, MAX_TIME_WAIT_FOR_NEW_NODE_UP, BaseNode
 from sdcm.cluster_aws import AWSNode
+from sdcm.mgmt.common import ScyllaManagerError, TaskStatus
 from sdcm.sct_events import Severity
 from sdcm.sct_events.filters import EventsSeverityChangerFilter
 from sdcm.sct_events.loaders import CassandraStressEvent
@@ -145,6 +147,20 @@ class LongevityScalingTest(LongevityTest):
                 else:
                     continue
         return nodes_to_remove
+
+    def manager_repair(self):
+        mgr_cluster = self.db_cluster.get_cluster_manager()
+        mgr_task = mgr_cluster.create_repair_task()
+        task_final_status = mgr_task.wait_and_get_final_status()
+        if task_final_status != TaskStatus.DONE:
+            progress_full_string = mgr_task.progress_string(
+                parse_table_res=False, is_verify_errorless_result=True).stdout
+            if task_final_status != TaskStatus.ERROR_FINAL:
+                mgr_task.stop()
+            raise ScyllaManagerError(
+                f'Task: {mgr_task.id} final status is: {str(task_final_status)}.\nTask progress string: '
+                f'{progress_full_string}')
+        self.log.info('Task: {} is done.'.format(mgr_task.id))
 
     def test_cluster_scaling(self):
         """
@@ -283,6 +299,77 @@ class LongevityScalingTest(LongevityTest):
                 # remove biggest instance type first
                 nodes_to_remove = self.get_nodes_to_remove(self.db_cluster.nodes, instance_types_to_remove)
                 self.scale_in(nodes_to_remove)
+
+        # killing background load creates to end the test
+        with EventsSeverityChangerFilter(new_severity=Severity.NORMAL, event_class=CassandraStressEvent, extra_time_to_expiration=60):
+            self.loaders.kill_stress_thread()
+
+    def test_scaling_single_step_repair(self):
+        """
+        Test a single step of scaling
+
+        The test looks at `instance_type_db` and fills the cluster with smaller instance types
+        Then it scales out with a bigger instance type and removes the smaller instance types
+        """
+        background_stress_queue: list[CassandraStressThread] = []
+        fill_stress_queue: list[CassandraStressThread] = []
+        argus_client = self.test_config.argus_client()
+        self.db_cluster.add_nemesis(nemesis=self.get_nemesis_class(), tester_obj=self)
+
+        # add instances smaller than the current one
+        for instance_type in instance_size_map.keys():
+            if instance_size_map[instance_type] < instance_size_map[self.params.get('instance_type_db')]:
+                self.log.info(f"SCALING CLUSTER: +{instance_type}")
+                self.scale_out(instance_type)
+
+        self.log.info("SCALING CLUSTER: starting fill load")
+        self.start_fill_load(fill_stress_queue)
+
+        # stop load at 90%
+        while True:
+            usages = {node: get_node_disk_usage(node) for node in self.db_cluster.nodes}
+            if any(u > 90 for u in usages.values()):
+                self.log.info("SCALING CLUSTER: killing fill load")
+                with EventsSeverityChangerFilter(new_severity=Severity.NORMAL, event_class=CassandraStressEvent, extra_time_to_expiration=60):
+                    for stress in fill_stress_queue:
+                        stress.kill()
+                break
+            time.sleep(60)
+
+        # sleep a little to let the cluster stabilize
+        time.sleep(900)
+
+        # start nemesis
+        self.db_cluster.start_nemesis()
+
+        # start background load
+        self.log.info("SCALING CLUSTER: start background load")
+        self.start_background_load(background_stress_queue)
+
+        repair_thread = Thread(target=self.manager_repair)
+        repair_thread.start()
+
+        current_instance_types = [get_instance_type(node)
+                                  for node in list(self.db_cluster.nodes_by_racks_idx_and_regions().values())[0]]
+        instance_type_to_add, instance_types_to_remove = upgrade_cluster(current_instance_types, min_nodes=1)
+        self.log.info(f"SCALING CLUSTER: {current_instance_types=}")
+        self.log.info(f"SCALING CLUSTER: {instance_type_to_add=}")
+        self.log.info(f"SCALING CLUSTER: {instance_types_to_remove=}")
+        with timer_results_to_argus(f"Scaling: +{instance_type_to_add} -{' - '.join(instance_types_to_remove)}", argus_client):
+            # scale out with bigger instance type
+            self.scale_out(instance_type_to_add)
+
+            # wait for tablet migration to finish
+            for node in self.db_cluster.nodes:
+                wait_no_tablets_migration_running(node)
+
+            if instance_types_to_remove:
+                # remove one instance type at a time so racks don't differ by more than 1 node
+                # remove biggest instance type first
+                nodes_to_remove = self.get_nodes_to_remove(self.db_cluster.nodes, instance_types_to_remove)
+                self.scale_in(nodes_to_remove)
+
+        repair_thread.join(timeout=3600)
 
         # killing background load creates to end the test
         with EventsSeverityChangerFilter(new_severity=Severity.NORMAL, event_class=CassandraStressEvent, extra_time_to_expiration=60):
