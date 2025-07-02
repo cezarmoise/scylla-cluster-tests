@@ -5167,7 +5167,7 @@ class BaseScyllaCluster:
                 return None
 
         target_node_ip = node.ip_address
-        undecommission_nodes = [n for n in self.nodes if n != node]
+        undecommission_nodes = [n for n in self.nodes if n != node and not n.running_nemesis]
 
         verification_node = random.choice(undecommission_nodes)
         node_ip_list = get_node_ip_list(verification_node)
