@@ -3624,6 +3624,17 @@ class Nemesis(NemesisFlags):
 
             return res.exit_status
 
+        def add_node():
+            # add new node with same type (data node / zero token node)
+            new_node_args = {"count": 1, "rack": self.target_node.rack}
+            if self.target_node._is_zero_token_node:
+                new_node_args.update({"is_zero_node": True})
+            new_node = self._add_and_init_new_cluster_nodes(**new_node_args)[0]
+            # in case the removed node was not last seed.
+            if node_to_remove.is_seed and num_of_seed_nodes > 1:
+                new_node.set_seed_flag(True)
+                self.cluster.update_seed_provider()
+
         # full cluster repair
         up_normal_nodes = self.cluster.get_nodes_up_and_normal(verification_node)
         # Repairing will result in a best effort repair due to the terminated node,
@@ -3634,7 +3645,11 @@ class Nemesis(NemesisFlags):
             self.run_repair_on_nodes(nodes=up_normal_nodes, ignore_down_hosts=True)
 
         with self.action_log_scope("Remove the node", target=node_to_remove.name):
-            exit_status = remove_node()
+            result = ParallelObject.run_named_tasks_in_parallel(
+                tasks={"remove": remove_node, "add": add_node},
+                timeout=HOUR_IN_SEC,
+            )
+            exit_status = result["remove"]
         # if remove node command failed by any reason,
         # we will remove the terminated node from
         # dead_nodes_list, so the health validator terminate the job
@@ -3664,15 +3679,6 @@ class Nemesis(NemesisFlags):
         assert removed_node_status is None, \
             "Node was not removed properly (Node status:{})".format(removed_node_status)
 
-        # add new node with same type (data node / zero token node)
-        new_node_args = {"count": 1, "rack": self.target_node.rack}
-        if self.target_node._is_zero_token_node:
-            new_node_args.update({"is_zero_node": True})
-        new_node = self._add_and_init_new_cluster_nodes(**new_node_args)[0]
-        # in case the removed node was not last seed.
-        if node_to_remove.is_seed and num_of_seed_nodes > 1:
-            new_node.set_seed_flag(True)
-            self.cluster.update_seed_provider()
         # after add_node, the left nodes have data that isn't part of their tokens anymore.
         # In order to eliminate cases that we miss a "data loss" bug because of it, we cleanup this data.
         # This fix important when just user profile is run in the test and "keyspace1" doesn't exist.
