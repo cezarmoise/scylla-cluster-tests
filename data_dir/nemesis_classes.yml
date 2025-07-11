@@ -28,6 +28,7 @@
 - EnospcAllNodesMonkey
 - EnospcMonkey
 - GrowShrinkClusterNemesis
+- GrowShrinkParallelNemesis
 - GrowShrinkZeroTokenNode
 - HardRebootNodeMonkey
 - IsolateNodeWithIptableRuleNemesis

@@ -4205,6 +4205,19 @@ class Nemesis(NemesisFlags):
                 self._double_cluster_load(duration)
         self._shrink_cluster(rack=None, new_nodes=new_nodes)
 
+    @target_data_nodes
+    def disrupt_grow_shrink_parallel(self):
+        sleep_time_between_ops = self.cluster.params.get('nemesis_sequence_sleep_between_ops')
+        if not self.has_steady_run and sleep_time_between_ops:
+            self.steady_state_latency()
+            self.has_steady_run = True
+
+        ParallelObject.run_named_tasks_in_parallel(
+            tasks={"grow": self._grow_cluster, "shrink": self._shrink_cluster},
+            timeout=HOUR_IN_SEC,
+            ignore_exceptions=True
+        )
+
     # NOTE: version limitation is caused by the following:
     #       - https://github.com/scylladb/scylla-enterprise/issues/3211
     #       - https://github.com/scylladb/scylladb/issues/14184
@@ -5710,6 +5723,15 @@ class GrowShrinkClusterNemesis(Nemesis):
 
     def disrupt(self):
         self.disrupt_grow_shrink_cluster()
+
+
+class GrowShrinkParallelNemesis(Nemesis):
+    disruptive = True
+    kubernetes = True
+    topology_changes = True
+
+    def disrupt(self):
+        self.disrupt_grow_shrink_parallel()
 
 
 class AddRemoveRackNemesis(Nemesis):
