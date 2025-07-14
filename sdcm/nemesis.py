@@ -4196,14 +4196,35 @@ class Nemesis(NemesisFlags):
         if not self.has_steady_run and sleep_time_between_ops:
             self.steady_state_latency()
             self.has_steady_run = True
-        new_nodes = self._grow_cluster(rack=None)
 
-        # pass on the exact nodes only if we have specific types for them
-        new_nodes = new_nodes if self.tester.params.get('nemesis_grow_shrink_instance_type') else None
-        if duration := self.tester.params.get('nemesis_double_load_during_grow_shrink_duration'):
-            with self.action_log_scope("Double load after grow cluster", target=self.target_node.name):
-                self._double_cluster_load(duration)
-        self._shrink_cluster(rack=None, new_nodes=new_nodes)
+        # it is not possible to both add and remove the same nodes
+        parallel = self.tester.params.get('nemesis_grow_shrink_instance_type') in [
+            None, self.tester.params.get('instance_type_db')]
+        # we need more than one node per rack to run grow and shrink in parallel
+        nemesis_add_node_cnt = self.tester.params.get('nemesis_add_node_cnt')
+        n_db_nodes = self.tester.params.get("n_db_nodes")
+        racks = self.cluster.racks_count
+        # only run grow and shrink in parallel if we have multiple racks
+        # and that at least 1 node per rack will remain after shrink
+        parallel = parallel and (racks > 1) and (nemesis_add_node_cnt < n_db_nodes // racks)
+
+        if parallel:
+            ParallelObject.run_named_tasks_in_parallel(
+                tasks={
+                    "grow": self._grow_cluster,
+                    "shrink": self._shrink_cluster
+                },
+                timeout=HOUR_IN_SEC,
+                ignore_exceptions=True
+            )
+        else:
+            new_nodes = self._grow_cluster(rack=None)
+            # pass on the exact nodes only if we have specific types for them
+            new_nodes = new_nodes if self.tester.params.get('nemesis_grow_shrink_instance_type') else None
+            if duration := self.tester.params.get('nemesis_double_load_during_grow_shrink_duration'):
+                with self.action_log_scope("Double load after grow cluster", target=self.target_node.name):
+                    self._double_cluster_load(duration)
+            self._shrink_cluster(rack=None, new_nodes=new_nodes)
 
     # NOTE: version limitation is caused by the following:
     #       - https://github.com/scylladb/scylla-enterprise/issues/3211
@@ -4245,16 +4266,17 @@ class Nemesis(NemesisFlags):
         if self._is_it_on_kubernetes():
             initial_db_size = self.tester.params.get("k8s_n_scylla_pods_per_cluster") or initial_db_size
 
-        if isinstance(initial_db_size, int):
-            decommission_nodes_number = min(cur_num_nodes_in_dc - initial_db_size, add_nodes_number)
-        else:
-            initial_db_size_in_dc = int(initial_db_size.split(" ")[self.target_node.dc_idx])
-            decommission_nodes_number = min(cur_num_nodes_in_dc - initial_db_size_in_dc, add_nodes_number)
+        if new_nodes is None:
+            if isinstance(initial_db_size, int):
+                decommission_nodes_number = min(cur_num_nodes_in_dc - initial_db_size, add_nodes_number)
+            else:
+                initial_db_size_in_dc = int(initial_db_size.split(" ")[self.target_node.dc_idx])
+                decommission_nodes_number = min(cur_num_nodes_in_dc - initial_db_size_in_dc, add_nodes_number)
 
-        if decommission_nodes_number < 1:
-            error = "Not enough nodes for decommission"
-            self.log.warning("Shrink cluster skipped. Error: %s", error)
-            raise Exception(error)
+            if decommission_nodes_number < 1:
+                error = "Not enough nodes for decommission"
+                self.log.warning("Shrink cluster skipped. Error: %s", error)
+                raise Exception(error)
 
         self.log.info("Start shrink cluster by %s nodes", decommission_nodes_number)
         # Currently on kubernetes first two nodes of each rack are getting seed status
