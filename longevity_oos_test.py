@@ -12,28 +12,28 @@
 # See LICENSE for more details.
 #
 # Copyright (c) 2025 ScyllaDB
-import contextlib
-from itertools import cycle
-from cassandra.query import SimpleStatement
-from contextlib import ExitStack, contextmanager
-from time import sleep, time
+# import contextlib
+# from itertools import cycle
+# from cassandra.query import SimpleStatement
+# from contextlib import ExitStack, contextmanager
+# from time import sleep, time
 from longevity_test import LongevityTest
-from sdcm.cluster import MAX_TIME_WAIT_FOR_DECOMMISSION, MAX_TIME_WAIT_FOR_NEW_NODE_UP, BaseNode
-from sdcm.db_stats import PrometheusDBStats
-from sdcm.exceptions import WaitForTimeoutError
-from sdcm.mgmt.common import ScyllaManagerError, TaskStatus
-from sdcm.remote.libssh2_client.exceptions import UnexpectedExit
-from sdcm.sct_events import Severity
-from sdcm.sct_events.database import DatabaseLogEvent
-from sdcm.sct_events.filters import EventsSeverityChangerFilter
-from sdcm.sct_events.loaders import CassandraStressEvent, CassandraStressLogEvent, YcsbStressEvent
-from sdcm.sct_events.nodetool import NodetoolEvent
-from sdcm.sct_events.system import InfoEvent, TestFrameworkEvent
-from sdcm.utils.adaptive_timeouts import Operations, adaptive_timeout
-from sdcm.utils.nemesis_utils.indexes import create_index, get_column_names, get_random_column_name, verify_query_by_index_works, wait_for_index_to_be_built, wait_for_view_to_be_built
-from sdcm.utils.replication_strategy_utils import NetworkTopologyReplicationStrategy, ReplicationStrategy
-from sdcm.utils.tablets.common import wait_no_tablets_migration_running
-from threading import Event, Thread
+# from sdcm.cluster import MAX_TIME_WAIT_FOR_DECOMMISSION, MAX_TIME_WAIT_FOR_NEW_NODE_UP, BaseNode
+# from sdcm.db_stats import PrometheusDBStats
+# from sdcm.exceptions import WaitForTimeoutError
+# from sdcm.mgmt.common import ScyllaManagerError, TaskStatus
+# from sdcm.remote.libssh2_client.exceptions import UnexpectedExit
+# from sdcm.sct_events import Severity
+# from sdcm.sct_events.database import DatabaseLogEvent
+# from sdcm.sct_events.filters import EventsSeverityChangerFilter
+# from sdcm.sct_events.loaders import CassandraStressEvent, CassandraStressLogEvent, YcsbStressEvent
+# from sdcm.sct_events.nodetool import NodetoolEvent
+# from sdcm.sct_events.system import InfoEvent, TestFrameworkEvent
+# from sdcm.utils.adaptive_timeouts import Operations, adaptive_timeout
+# from sdcm.utils.nemesis_utils.indexes import create_index, get_column_names, get_random_column_name, verify_query_by_index_works, wait_for_index_to_be_built, wait_for_view_to_be_built
+# from sdcm.utils.replication_strategy_utils import NetworkTopologyReplicationStrategy, ReplicationStrategy
+# from sdcm.utils.tablets.common import wait_no_tablets_migration_running
+# from threading import Event, Thread
 
 
 # @contextmanager
@@ -196,7 +196,6 @@ class LongevityOutOfSpaceTest(LongevityTest):
         Wait for the new nodes to be up
         Continue writing data
         """
-        self.monitors.reconfigure_scylla_monitoring()
         self.test_custom_time()
 
         # with ignore_stress_errors():
