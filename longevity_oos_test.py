@@ -196,6 +196,7 @@ class LongevityOutOfSpaceTest(LongevityTest):
         Wait for the new nodes to be up
         Continue writing data
         """
+        self.monitors.reconfigure_scylla_monitoring()
         self.test_custom_time()
 
         # with ignore_stress_errors():
