@@ -12,7 +12,7 @@ stress_cmd_w: [
 
 n_db_nodes: 3
 simulated_racks: 3
-instance_type_db: 'i4i.large'
+instance_type_db: 'i4i.2xlarge'
 n_loaders: 3
 
 user_prefix: 'oos-test'
