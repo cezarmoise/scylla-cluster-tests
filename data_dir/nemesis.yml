@@ -78,6 +78,22 @@ disrupt_bootstrap_streaming_error:
   supports_high_disk_utilization: true
   topology_changes: true
   zero_node_changes: false
+disrupt_corrupt_scrub_validate:
+  config_changes: false
+  delete_rows: false
+  disruptive: false
+  free_tier_set: false
+  has_steady_run: false
+  kubernetes: false
+  limited: false
+  manager_operation: false
+  networking: false
+  run_with_gemini: true
+  schema_changes: false
+  sla: false
+  supports_high_disk_utilization: false
+  topology_changes: false
+  zero_node_changes: false
 disrupt_corrupt_then_scrub:
   config_changes: false
   delete_rows: false

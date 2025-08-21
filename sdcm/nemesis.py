@@ -4147,6 +4147,17 @@ class Nemesis(NemesisFlags):
 
         self.clear_snapshots()
 
+    @target_data_nodes
+    def disrupt_corrupt_scrub_validate(self):
+        self._corrupt_data_file()
+        self.log.debug("Rebuild sstables by scrub with `--mode=VALIDATE`, corrupted partitions will be quarantined.")
+        with ignore_scrub_invalid_errors(), adaptive_timeout(Operations.SCRUB, self.target_node, timeout=HOUR_IN_SEC * 48):
+            for ks in self.cluster.get_test_keyspaces():
+                self.target_node.run_nodetool("scrub", args=f"--mode=VALIDATE {ks}")
+                self.target_node.run_nodetool("dropquarantinedsstables")
+
+        self.clear_snapshots()
+
     @latency_calculator_decorator(legend="Adding new nodes")
     def add_new_nodes(self, count, rack=None, instance_type: str = None) -> list[BaseNode]:
         nodes = self._add_and_init_new_cluster_nodes(count, rack=rack, instance_type=instance_type)
@@ -6623,6 +6634,14 @@ class CorruptThenScrubMonkey(Nemesis):
 
     def disrupt(self):
         self.disrupt_corrupt_then_scrub()
+
+
+class CorruptScrubValidateMonkey(Nemesis):
+    disruptive = False
+    supports_high_disk_utilization = False
+
+    def disrupt(self):
+        self.disrupt_corrupt_scrub_validate()
 
 
 class MemoryStressMonkey(Nemesis):

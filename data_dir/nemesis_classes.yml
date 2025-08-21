@@ -8,6 +8,7 @@
 - CDCStressorMonkey
 - ClusterRollingRestart
 - ClusterRollingRestartRandomOrder
+- CorruptScrubValidateMonkey
 - CorruptThenRebuildMonkey
 - CorruptThenRepairMonkey
 - CorruptThenScrubMonkey
