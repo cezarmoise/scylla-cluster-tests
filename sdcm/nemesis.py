@@ -4139,6 +4139,7 @@ class Nemesis(NemesisFlags):
         Try to rebuild the sstables of all test keyspaces by scrub, the corrupted partitions
         will be skipped.
         """
+        self._corrupt_data_file()
         self.log.debug("Rebuild sstables by scrub with `--skip-corrupted`, corrupted partitions will be skipped.")
         with ignore_scrub_invalid_errors(), adaptive_timeout(Operations.SCRUB, self.target_node, timeout=HOUR_IN_SEC * 48):
             for ks in self.cluster.get_test_keyspaces():
