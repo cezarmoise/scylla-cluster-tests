@@ -3,8 +3,8 @@
 # A 3rd of the data is written to a keyspace that is dropped after all writes are done.
 test_duration: 720
 pre_create_keyspace: [
-  "CREATE KEYSPACE IF NOT EXISTS ks_90percent_ttl WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 3};",
-  "CREATE TABLE IF NOT EXISTS ks_90percent_ttl.standard1 (key blob PRIMARY KEY, \"C0\" blob, \"C1\" blob, \"C2\" blob, \"C3\" blob, \"C4\" blob, \"C5\" blob, \"C6\" blob, \"C7\" blob) WITH gc_grace_seconds = 12300 AND compaction = { 'class': 'TimeWindowCompactionStrategy', 'compaction_window_size': 1, 'compaction_window_unit': 'HOURS' } AND tombstone_gc = {'mode':'immediate'};",
+  "CREATE KEYSPACE IF NOT EXISTS ks_90percent_drop WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 3};",
+  "CREATE TABLE IF NOT EXISTS ks_90percent_drop.standard1 (key blob PRIMARY KEY, \"C0\" blob, \"C1\" blob, \"C2\" blob, \"C3\" blob, \"C4\" blob, \"C5\" blob, \"C6\" blob, \"C7\" blob) WITH gc_grace_seconds = 12300 AND compaction = { 'class': 'TimeWindowCompactionStrategy', 'compaction_window_size': 1, 'compaction_window_unit': 'HOURS' } AND tombstone_gc = {'mode':'immediate'};",
 ]
 
 prepare_write_cmd: [
