@@ -4,7 +4,7 @@
 test_duration: 720
 pre_create_keyspace: [
   "CREATE KEYSPACE IF NOT EXISTS ks_90percent_drop WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 3};",
-  "CREATE TABLE IF NOT EXISTS ks_90percent_drop.standard1 (key blob PRIMARY KEY, \"C0\" blob, \"C1\" blob, \"C2\" blob, \"C3\" blob, \"C4\" blob, \"C5\" blob, \"C6\" blob, \"C7\" blob) WITH gc_grace_seconds = 12300 AND compaction = { 'class': 'TimeWindowCompactionStrategy', 'compaction_window_size': 1, 'compaction_window_unit': 'HOURS' } AND tombstone_gc = {'mode':'immediate'};",
+  "CREATE TABLE IF NOT EXISTS ks_90percent_drop.standard1 (key blob PRIMARY KEY, \"C0\" blob, \"C1\" blob, \"C2\" blob, \"C3\" blob, \"C4\" blob, \"C5\" blob, \"C6\" blob, \"C7\" blob) WITH gc_grace_seconds = 3600 AND compaction = { 'class': 'SizeTieredCompactionStrategy' };",
 ]
 
 prepare_write_cmd: [
@@ -18,7 +18,7 @@ post_prepare_cql_cmds: [
 ]
 
 stress_cmd: [
-  "cassandra-stress mixed no-warmup cl=QUORUM duration=420m -schema 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=100 fixed=30000/s' -col 'size=FIXED(128) n=FIXED(8)' -pop 'dist=gauss(1..720000000,360000000,7200000)'"
+  "cassandra-stress mixed no-warmup cl=QUORUM duration=240m -schema 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=100 fixed=30000/s' -col 'size=FIXED(128) n=FIXED(8)' -pop 'dist=gauss(1..720000000,360000000,7200000)'"
 ]
 
 n_db_nodes: 3
