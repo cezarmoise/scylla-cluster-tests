@@ -4,7 +4,7 @@
 test_duration: 720
 pre_create_keyspace: [
   "CREATE KEYSPACE IF NOT EXISTS ks_90percent_drop WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 3};",
-  "CREATE TABLE IF NOT EXISTS ks_90percent_drop.standard1 (key blob PRIMARY KEY, \"C0\" blob, \"C1\" blob, \"C2\" blob, \"C3\" blob, \"C4\" blob, \"C5\" blob, \"C6\" blob, \"C7\" blob) WITH compaction = { 'class': 'SizeTieredCompactionStrategy' };",
+  "CREATE TABLE IF NOT EXISTS ks_90percent_drop.standard1 (key blob PRIMARY KEY, \"C0\" blob, \"C1\" blob, \"C2\" blob, \"C3\" blob, \"C4\" blob, \"C5\" blob, \"C6\" blob, \"C7\" blob) WITH compaction = { 'class': 'TimeWindowCompactionStrategy', 'compaction_window_size': 1, 'compaction_window_unit': 'HOURS' };",
 ]
 
 prepare_write_cmd: [
@@ -29,7 +29,7 @@ n_loaders: 3
 instance_type_loader: 'c6i.2xlarge'
 instance_type_monitor: 't3.large'
 
-nemesis_class_name: 'MajorCompactionMonkey'
+nemesis_class_name: 'MajorCompactionMonkey:1 MajorCompactionMonkey:1 MajorCompactionMonkey:1'
 
 user_prefix: 'elasticity-test'
 round_robin: true

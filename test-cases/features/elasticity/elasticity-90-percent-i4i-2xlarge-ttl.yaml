@@ -25,7 +25,7 @@ n_loaders: 3
 instance_type_loader: 'c6i.2xlarge'
 instance_type_monitor: 't3.large'
 
-nemesis_class_name: 'MajorCompactionMonkey'
+nemesis_class_name: 'MajorCompactionMonkey:1 MajorCompactionMonkey:1 MajorCompactionMonkey:1'
 
 user_prefix: 'elasticity-test'
 round_robin: true
