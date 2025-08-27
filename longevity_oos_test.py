@@ -26,8 +26,9 @@ from sdcm.sct_events.database import DatabaseLogEvent
 from sdcm.sct_events.filters import EventsSeverityChangerFilter
 from sdcm.sct_events.loaders import CassandraStressEvent, CassandraStressLogEvent
 from sdcm.sct_events.nodetool import NodetoolEvent
-from sdcm.sct_events.system import TestFrameworkEvent
+from sdcm.sct_events.system import InfoEvent, TestFrameworkEvent
 from sdcm.utils.adaptive_timeouts import Operations, adaptive_timeout
+from sdcm.utils.common import ParallelObject
 from sdcm.utils.decorators import retrying
 from sdcm.utils.nemesis_utils.indexes import create_index, verify_query_by_index_works, wait_for_index_to_be_built
 from sdcm.utils.replication_strategy_utils import NetworkTopologyReplicationStrategy, ReplicationStrategy
@@ -126,17 +127,29 @@ class LongevityOutOfSpaceTest(LongevityTest):
         results = self._query_disk_usage(node, start=start, end=end)
         return max(float(v[1]) for v in results[0]['values'])
 
-    def run_read_stress(self):
+    def run_read_stress(self, want_success=True):
         stress_queue = []
-        self.assemble_and_run_all_stress_cmd(stress_queue, self.params.get(
-            'stress_cmd_r'), self.params.get('keyspace_num'))
-        return all(self.verify_stress_thread(stress) for stress in stress_queue)
+        stress_cmd = self.params.get('stress_cmd_r')
+        keyspace_num = self.params.get('keyspace_num')
+        self.assemble_and_run_all_stress_cmd(stress_queue, stress_cmd, keyspace_num)
+        if all(self.verify_stress_thread(stress) for stress in stress_queue) != want_success:
+            TestFrameworkEvent(
+                source=self.__class__.__name__,
+                message="Read should have failed, but it succeeded" if not want_success else "Read should have succeeded, but it failed",
+                severity=Severity.ERROR
+            ).publish()
 
-    def run_write_stress(self):
+    def run_write_stress(self, want_success=True):
         stress_queue = []
-        self.assemble_and_run_all_stress_cmd(stress_queue, self.params.get(
-            'stress_cmd_w'), self.params.get('keyspace_num'))
-        return all(self.verify_stress_thread(stress) for stress in stress_queue)
+        stress_cmd = self.params.get('stress_cmd_w')
+        keyspace_num = self.params.get('keyspace_num')
+        self.assemble_and_run_all_stress_cmd(stress_queue, stress_cmd, keyspace_num)
+        if all(self.verify_stress_thread(stress) for stress in stress_queue) != want_success:
+            TestFrameworkEvent(
+                source=self.__class__.__name__,
+                message="Write should have failed, but it succeeded" if not want_success else "Write should have succeeded, but it failed",
+                severity=Severity.ERROR
+            ).publish()
 
     def scale_out(self, nr_nodes=None, rack=None):
         """
@@ -158,6 +171,14 @@ class LongevityOutOfSpaceTest(LongevityTest):
         self.db_cluster.wait_for_nodes_up_and_normal(nodes=added_nodes)
         for node in self.db_cluster.nodes:
             wait_no_tablets_migration_running(node, timeout=7200)
+        return added_nodes
+
+    def scale_in(self, nodes: list[BaseNode]):
+        parallel_obj = ParallelObject(objects=nodes, timeout=MAX_TIME_WAIT_FOR_DECOMMISSION, num_workers=len(nodes))
+        InfoEvent(f'Started decommissioning {len(nodes)} nodes').publish()
+        parallel_obj.run(self.db_cluster.decommission, ignore_exceptions=False, unpack_objects=True)
+        InfoEvent(f'Finished decommissioning {len(nodes)} nodes').publish()
+        self.monitors.reconfigure_scylla_monitoring()
 
     def get_compactions(self, node: BaseNode, interval: int) -> int:
         """
@@ -175,6 +196,138 @@ class LongevityOutOfSpaceTest(LongevityTest):
         # [{'metric': {}, 'values': [[1749638594.936, '0'], [1749638614.936, '0'], [1749638634.936, '0'], [1749638654.936, '0']]}]
         return sum(int(v[1]) for v in results[0]['values']) if results else 0
 
+    def prepare_with_restarts(self):
+        prepare_thread = Thread(target=self.run_prepare_write_cmd)
+        prepare_thread.start()
+        nodes = cycle(self.db_cluster.nodes)
+        while prepare_thread.is_alive():
+            # every 15 minutes, cycle thorough the nodes restart them
+            sleep(900)
+            node = next(nodes)
+            if self.get_disk_usage(node) > 70:
+                break
+            self.log.info(f"Restarting node {node.name}.")
+            node.stop_scylla(verify_down=True)
+            node.start_scylla(verify_up=True)
+            self.db_cluster.wait_for_nodes_up_and_normal(nodes=[node])
+            self.log.info(f"Node {node.name} has restarted.")
+        prepare_thread.join()
+        self.log.info("Prepare write command finished.")
+
+    def check_repair(self):
+        with ignore_stress_errors():
+            stress_thread = Thread(target=self.run_write_stress)
+            stress_thread.start()
+            self.log.info("Started stress write thread.")
+
+            while stress_thread.is_alive():
+                if any(self.get_disk_usage(node) >= 97 for node in self.db_cluster.nodes):
+                    break
+                sleep(60)
+
+            mgr_cluster = self.db_cluster.get_cluster_manager()
+            repair_task = mgr_cluster.create_repair_task()
+            self.log.info(f"Repair task {repair_task.id} created.")
+
+            stress_thread.join()
+
+        repair_timeout = 3 * 3600  # 3 hours
+        try:
+            task_final_status = repair_task.wait_and_get_final_status(timeout=repair_timeout)
+            TestFrameworkEvent(source=self.__class__.__name__,
+                               message=f"Repair should not finish. Status: {task_final_status}",
+                               severity=Severity.CRITICAL).publish()
+        except WaitForTimeoutError:
+            self.log.info(f"Repair task {repair_task.id} did not finish as expected, continuing with scale out.")
+
+        new_nodes = self.scale_out()
+
+        task_final_status = repair_task.wait_and_get_final_status(timeout=repair_timeout)
+        if task_final_status != TaskStatus.DONE:
+            progress_full_string = repair_task.progress_string(
+                parse_table_res=False, is_verify_errorless_result=True).stdout
+            if task_final_status != TaskStatus.ERROR_FINAL:
+                repair_task.stop()
+            raise ScyllaManagerError(
+                f"Task: {repair_task.id} final status is: {task_final_status}.\nTask progress string: {progress_full_string}")
+        self.log.info(f"Task: {repair_task.id} is done.")
+
+        self.run_read_stress()
+        self.scale_in(new_nodes)
+
+    def check_reject_writes_restart_compactions(self):
+        with ignore_stress_errors():
+            stress_thread = Thread(target=self.run_write_stress, kwargs={"want_success": False})
+            stress_thread.start()
+
+            # Restart a node near 98% disk usage
+            restarted = False
+            while stress_thread.is_alive() and not restarted:
+                for node in self.db_cluster.nodes:
+                    disk_usage = self.get_disk_usage(node)
+                    if disk_usage >= 97:
+                        self.log.info(f"Node {node.name} has reached 97% disk usage, restarting it.")
+                        node.stop_scylla(verify_down=True)
+                        node.start_scylla(verify_up=True)
+                        restarted = True
+                        break
+                sleep(60)
+
+            stress_thread.join()
+
+        # Check that the node that got to 98% does not have running compactions
+        sleep(1200)
+        threshold_node = max(self.db_cluster.nodes, key=self.get_disk_usage)
+        if self.get_compactions(threshold_node, interval=600) != 0:
+            TestFrameworkEvent(source=self.__class__.__name__,
+                               message=f"There should be no running compactions on node {threshold_node.name}",
+                               severity=Severity.ERROR).publish()
+
+        start_of_scale_out = time()
+        new_nodes = self.scale_out()
+        end_of_scale_out = time()
+
+        # Check that the node that got to 98% has running compactions
+        interval = int(end_of_scale_out - start_of_scale_out)
+        if self.get_compactions(threshold_node, interval=interval) == 0:
+            TestFrameworkEvent(source=self.__class__.__name__,
+                               message=f"There should have been running compactions on node {threshold_node.name} after scale out",
+                               severity=Severity.ERROR).publish()
+
+        self.run_write_stress()
+        self.scale_in(new_nodes)
+
+    def check_secondary_index(self):
+        ks = "keyspace1"
+        cf = "standard1"
+        column = "C0"
+        node = self.db_cluster.nodes[0]
+        timeout = 2 * 3600
+
+        with self.db_cluster.cql_connection_patient(node, connect_timeout=300) as session:
+            index_name = create_index(session, ks, cf, column)
+
+        try:
+            wait_for_index_to_be_built(node, ks, index_name, timeout=timeout)
+            TestFrameworkEvent(message="Index creation should not finish.", severity=Severity.CRITICAL).publish()
+        except TimeoutError:
+            self.log.info(f"Index {index_name} creation timed out as expected")
+
+        new_nodes = self.scale_out()
+
+        wait_for_index_to_be_built(node, ks, index_name, timeout=timeout)
+
+        with self.db_cluster.cql_connection_patient(node, connect_timeout=300) as session:
+            verify_query_by_index_works(session, ks, cf, column)
+
+        self.scale_in(new_nodes)
+
+    def test_oos_all(self):
+        self.prepare_with_restarts()
+        self.check_repair()
+        self.check_reject_writes_restart_compactions()
+        self.check_secondary_index()
+
     def test_oos_write(self):
         """
         Fill the cluster to 90%
@@ -187,11 +340,7 @@ class LongevityOutOfSpaceTest(LongevityTest):
         self.run_prepare_write_cmd()
 
         with ignore_stress_errors():
-            result = self.run_write_stress()
-            if result:
-                TestFrameworkEvent(source=self.__class__.__name__,
-                                   message="Writes should have failed, but it succeeded",
-                                   severity=Severity.ERROR).publish()
+            self.run_write_stress(want_success=False)
 
         self.scale_out()
 
@@ -234,22 +383,7 @@ class LongevityOutOfSpaceTest(LongevityTest):
         Repair task should finish with status DONE
         Verify the repair by reading with CL=THREE
         """
-        prepare_thread = Thread(target=self.run_prepare_write_cmd)
-        prepare_thread.start()
-        nodes = cycle(self.db_cluster.nodes)
-        while prepare_thread.is_alive():
-            # every 15 minutes, cycle thorough the nodes restart them
-            sleep(900)
-            node = next(nodes)
-            if self.get_disk_usage(node) > 70:
-                break
-            self.log.info(f"Restarting node {node.name}.")
-            node.stop_scylla(verify_down=True)
-            node.start_scylla(verify_up=True)
-            self.db_cluster.wait_for_nodes_up_and_normal(nodes=[node])
-            self.log.info(f"Node {node.name} has restarted.")
-        prepare_thread.join()
-        self.log.info("Prepare write command finished.")
+        self.prepare_with_restarts()
 
         with ignore_stress_errors():
             stress_thread = Thread(target=self.run_write_stress)
@@ -354,11 +488,7 @@ class LongevityOutOfSpaceTest(LongevityTest):
                                severity=Severity.ERROR).publish()
 
         with ignore_stress_errors():
-            result = self.run_read_stress()
-            if result:
-                TestFrameworkEvent(source=self.__class__.__name__,
-                                   message="Reading with CL=THREE should have failed, but it succeeded.",
-                                   severity=Severity.ERROR).publish()
+            self.run_read_stress(want_success=False)
 
         self.scale_out()
 
