@@ -30,7 +30,7 @@ from sdcm.sct_events.system import InfoEvent, TestFrameworkEvent
 from sdcm.utils.adaptive_timeouts import Operations, adaptive_timeout
 from sdcm.utils.common import ParallelObject
 from sdcm.utils.decorators import retrying
-from sdcm.utils.nemesis_utils.indexes import create_index, verify_query_by_index_works, wait_for_index_to_be_built
+from sdcm.utils.nemesis_utils.indexes import create_index, drop_index, verify_query_by_index_works, wait_for_index_to_be_built
 from sdcm.utils.replication_strategy_utils import NetworkTopologyReplicationStrategy, ReplicationStrategy
 from sdcm.utils.tablets.common import wait_no_tablets_migration_running
 from threading import Thread
@@ -196,6 +196,10 @@ class LongevityOutOfSpaceTest(LongevityTest):
         # [{'metric': {}, 'values': [[1749638594.936, '0'], [1749638614.936, '0'], [1749638634.936, '0'], [1749638654.936, '0']]}]
         return sum(int(v[1]) for v in results[0]['values']) if results else 0
 
+    def drop_new_keyspace(self):
+        with self.db_cluster.cql_connection_patient(self.db_cluster.nodes[0]) as session:
+            session.execute('DROP KEYSPACE keyspace2')
+
     def prepare_with_restarts(self):
         prepare_thread = Thread(target=self.run_prepare_write_cmd)
         prepare_thread.start()
@@ -253,6 +257,7 @@ class LongevityOutOfSpaceTest(LongevityTest):
         self.log.info(f"Task: {repair_task.id} is done.")
 
         self.run_read_stress()
+        self.drop_new_keyspace()
         self.scale_in(new_nodes)
 
     def check_reject_writes_restart_compactions(self):
@@ -295,6 +300,7 @@ class LongevityOutOfSpaceTest(LongevityTest):
                                severity=Severity.ERROR).publish()
 
         self.run_write_stress()
+        self.drop_new_keyspace()
         self.scale_in(new_nodes)
 
     def check_secondary_index(self):
@@ -320,6 +326,7 @@ class LongevityOutOfSpaceTest(LongevityTest):
         with self.db_cluster.cql_connection_patient(node, connect_timeout=300) as session:
             verify_query_by_index_works(session, ks, cf, column)
 
+        drop_index(session, ks, index_name)
         self.scale_in(new_nodes)
 
     def test_oos_all(self):
