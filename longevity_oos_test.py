@@ -12,6 +12,8 @@
 # See LICENSE for more details.
 #
 # Copyright (c) 2025 ScyllaDB
+import contextlib
+from functools import partial
 from itertools import cycle
 from contextlib import ExitStack, contextmanager
 from time import sleep, time
@@ -19,8 +21,8 @@ from longevity_test import LongevityTest
 from sdcm.cluster import MAX_TIME_WAIT_FOR_DECOMMISSION, MAX_TIME_WAIT_FOR_NEW_NODE_UP, BaseNode
 from sdcm.db_stats import PrometheusDBStats
 from sdcm.exceptions import WaitForTimeoutError
+from sdcm.mgmt.cli import RepairTask
 from sdcm.mgmt.common import ScyllaManagerError, TaskStatus
-from sdcm.remote.libssh2_client.exceptions import UnexpectedExit
 from sdcm.sct_events import Severity
 from sdcm.sct_events.database import DatabaseLogEvent
 from sdcm.sct_events.filters import EventsSeverityChangerFilter
@@ -30,8 +32,7 @@ from sdcm.sct_events.system import InfoEvent, TestFrameworkEvent
 from sdcm.utils.adaptive_timeouts import Operations, adaptive_timeout
 from sdcm.utils.common import ParallelObject
 from sdcm.utils.decorators import retrying
-from sdcm.utils.nemesis_utils.indexes import create_index, drop_index, verify_query_by_index_works, wait_for_index_to_be_built
-from sdcm.utils.replication_strategy_utils import NetworkTopologyReplicationStrategy, ReplicationStrategy
+from sdcm.utils.nemesis_utils.indexes import create_index, verify_query_by_index_works, wait_for_index_to_be_built
 from sdcm.utils.tablets.common import wait_no_tablets_migration_running
 from threading import Thread
 
@@ -127,29 +128,30 @@ class LongevityOutOfSpaceTest(LongevityTest):
         results = self._query_disk_usage(node, start=start, end=end)
         return max(float(v[1]) for v in results[0]['values'])
 
+    def error_event(self, message):
+        TestFrameworkEvent(source=self.__class__.__name__, message=message, severity=Severity.ERROR).publish()
+
     def run_read_stress(self, want_success=True):
         stress_queue = []
         stress_cmd = self.params.get('stress_cmd_r')
         keyspace_num = self.params.get('keyspace_num')
-        self.assemble_and_run_all_stress_cmd(stress_queue, stress_cmd, keyspace_num)
-        if all(self.verify_stress_thread(stress) for stress in stress_queue) != want_success:
-            TestFrameworkEvent(
-                source=self.__class__.__name__,
-                message="Read should have failed, but it succeeded" if not want_success else "Read should have succeeded, but it failed",
-                severity=Severity.ERROR
-            ).publish()
+
+        with (contextlib.nullcontext() if want_success else ignore_stress_errors()):
+            self.assemble_and_run_all_stress_cmd(stress_queue, stress_cmd, keyspace_num)
+            if all(self.verify_stress_thread(stress) for stress in stress_queue) != want_success:
+                self.error_event(
+                    "Read should have succeeded, but it failed" if want_success else "Read should have failed, but it succeeded")
 
     def run_write_stress(self, want_success=True):
         stress_queue = []
         stress_cmd = self.params.get('stress_cmd_w')
         keyspace_num = self.params.get('keyspace_num')
-        self.assemble_and_run_all_stress_cmd(stress_queue, stress_cmd, keyspace_num)
-        if all(self.verify_stress_thread(stress) for stress in stress_queue) != want_success:
-            TestFrameworkEvent(
-                source=self.__class__.__name__,
-                message="Write should have failed, but it succeeded" if not want_success else "Write should have succeeded, but it failed",
-                severity=Severity.ERROR
-            ).publish()
+
+        with (contextlib.nullcontext() if want_success else ignore_stress_errors()):
+            self.assemble_and_run_all_stress_cmd(stress_queue, stress_cmd, keyspace_num)
+            if all(self.verify_stress_thread(stress) for stress in stress_queue) != want_success:
+                self.error_event(
+                    "Write should have succeeded, but it failed" if want_success else "Write should have failed, but it succeeded")
 
     def scale_out(self, nr_nodes=None, rack=None):
         """
@@ -218,344 +220,123 @@ class LongevityOutOfSpaceTest(LongevityTest):
         prepare_thread.join()
         self.log.info("Prepare write command finished.")
 
-    def check_repair(self):
-        with ignore_stress_errors():
-            stress_thread = Thread(target=self.run_write_stress)
-            stress_thread.start()
-            self.log.info("Started stress write thread.")
-
-            while stress_thread.is_alive():
-                if any(self.get_disk_usage(node) >= 97 for node in self.db_cluster.nodes):
+    def restart_at_97(self):
+        restarted = False
+        while not restarted:
+            for node in self.db_cluster.nodes:
+                disk_usage = self.get_disk_usage(node)
+                if disk_usage >= 97:
+                    self.log.info(f"Node {node.name} has reached 97% disk usage, restarting it.")
+                    node.stop_scylla(verify_down=True)
+                    node.start_scylla(verify_up=True)
+                    restarted = True
                     break
-                sleep(60)
-
-            mgr_cluster = self.db_cluster.get_cluster_manager()
-            repair_task = mgr_cluster.create_repair_task()
-            self.log.info(f"Repair task {repair_task.id} created.")
-
-            stress_thread.join()
-
-        repair_timeout = 3 * 3600  # 3 hours
-        try:
-            task_final_status = repair_task.wait_and_get_final_status(timeout=repair_timeout)
-            TestFrameworkEvent(source=self.__class__.__name__,
-                               message=f"Repair should not finish. Status: {task_final_status}",
-                               severity=Severity.CRITICAL).publish()
-        except WaitForTimeoutError:
-            self.log.info(f"Repair task {repair_task.id} did not finish as expected, continuing with scale out.")
-
-        new_nodes = self.scale_out()
-
-        task_final_status = repair_task.wait_and_get_final_status(timeout=repair_timeout)
-        if task_final_status != TaskStatus.DONE:
-            progress_full_string = repair_task.progress_string(
-                parse_table_res=False, is_verify_errorless_result=True).stdout
-            if task_final_status != TaskStatus.ERROR_FINAL:
-                repair_task.stop()
-            raise ScyllaManagerError(
-                f"Task: {repair_task.id} final status is: {task_final_status}.\nTask progress string: {progress_full_string}")
-        self.log.info(f"Task: {repair_task.id} is done.")
-
-        self.run_read_stress()
-        self.drop_new_keyspace()
-        self.scale_in(new_nodes)
-
-    def check_reject_writes_restart_compactions(self):
-        with ignore_stress_errors():
-            stress_thread = Thread(target=self.run_write_stress, kwargs={"want_success": False})
-            stress_thread.start()
-
-            # Restart a node near 98% disk usage
-            restarted = False
-            while stress_thread.is_alive() and not restarted:
-                for node in self.db_cluster.nodes:
-                    disk_usage = self.get_disk_usage(node)
-                    if disk_usage >= 97:
-                        self.log.info(f"Node {node.name} has reached 97% disk usage, restarting it.")
-                        node.stop_scylla(verify_down=True)
-                        node.start_scylla(verify_up=True)
-                        restarted = True
-                        break
-                sleep(60)
-
-            stress_thread.join()
-
-        # Check that the node that got to 98% does not have running compactions
-        sleep(1200)
-        threshold_node = max(self.db_cluster.nodes, key=self.get_disk_usage)
-        if self.get_compactions(threshold_node, interval=600) != 0:
-            TestFrameworkEvent(source=self.__class__.__name__,
-                               message=f"There should be no running compactions on node {threshold_node.name}",
-                               severity=Severity.ERROR).publish()
-
-        start_of_scale_out = time()
-        new_nodes = self.scale_out()
-        end_of_scale_out = time()
-
-        # Check that the node that got to 98% has running compactions
-        interval = int(end_of_scale_out - start_of_scale_out)
-        if self.get_compactions(threshold_node, interval=interval) == 0:
-            TestFrameworkEvent(source=self.__class__.__name__,
-                               message=f"There should have been running compactions on node {threshold_node.name} after scale out",
-                               severity=Severity.ERROR).publish()
-
-        self.run_write_stress()
-        self.drop_new_keyspace()
-        self.scale_in(new_nodes)
-
-    def check_secondary_index(self):
-        ks = "keyspace1"
-        cf = "standard1"
-        column = "C0"
-        node = self.db_cluster.nodes[0]
-        timeout = 2 * 3600
-
-        with self.db_cluster.cql_connection_patient(node, connect_timeout=300) as session:
-            index_name = create_index(session, ks, cf, column)
-
-        try:
-            wait_for_index_to_be_built(node, ks, index_name, timeout=timeout)
-            TestFrameworkEvent(message="Index creation should not finish.", severity=Severity.CRITICAL).publish()
-        except TimeoutError:
-            self.log.info(f"Index {index_name} creation timed out as expected")
-
-        new_nodes = self.scale_out()
-
-        wait_for_index_to_be_built(node, ks, index_name, timeout=timeout)
-
-        with self.db_cluster.cql_connection_patient(node, connect_timeout=300) as session:
-            verify_query_by_index_works(session, ks, cf, column)
-
-        drop_index(session, ks, index_name)
-        self.scale_in(new_nodes)
-
-    def test_oos_all(self):
-        self.prepare_with_restarts()
-        self.check_repair()
-        self.check_reject_writes_restart_compactions()
-        self.check_secondary_index()
-
-    def test_oos_write(self):
-        """
-        Fill the cluster to 90%
-        Start another write, that would need more space than available
-        Write should fail, but the cluster should not run out of space
-        Scale out the cluster
-        Continue writing data
-        Write should succeed after scale out
-        """
-        self.run_prepare_write_cmd()
-
-        with ignore_stress_errors():
-            self.run_write_stress(want_success=False)
-
-        self.scale_out()
-
-        self.run_write_stress()
-
-    def test_oos_restart(self):
-        """
-        Fill the cluster to 90%
-        Start another write, that would need more space than available
-        During this write, restart a node
-        The restarted node should not run out of space
-        """
-        self.run_prepare_write_cmd()
-
-        with ignore_stress_errors():
-            stress_thread = Thread(target=self.run_write_stress)
-            stress_thread.start()
-
-            restarted = False
-            while stress_thread.is_alive() and not restarted:
-                for node in self.db_cluster.nodes:
-                    disk_usage = self.get_disk_usage(node)
-                    if disk_usage >= 97:
-                        self.log.info(f"Node {node.name} has reached 97% disk usage, restarting it.")
-                        node.stop_scylla(verify_down=True)
-                        node.start_scylla(verify_up=True)
-                        restarted = True
-                        break
-                sleep(60)
-
-            stress_thread.join()
-
-    def test_oos_repair(self):
-        """
-        Fill the cluster to 90%; Restart nodes during fill
-        Start another write, that would need more space than available
-        At 97% disk usage, start a repair task
-        Repair should have status RUNNING and not finish
-        Scale out the cluster
-        Repair task should finish with status DONE
-        Verify the repair by reading with CL=THREE
-        """
-        self.prepare_with_restarts()
-
-        with ignore_stress_errors():
-            stress_thread = Thread(target=self.run_write_stress)
-            stress_thread.start()
-            self.log.info("Started stress write thread.")
-
-            while stress_thread.is_alive():
-                if any(self.get_disk_usage(node) >= 97 for node in self.db_cluster.nodes):
-                    break
-                sleep(60)
-
-            mgr_cluster = self.db_cluster.get_cluster_manager()
-            repair_task = mgr_cluster.create_repair_task()
-            self.log.info(f"Repair task {repair_task.id} created.")
-
-            stress_thread.join()
-
-        repair_timeout = 3 * 3600  # 3 hours
-        try:
-            task_final_status = repair_task.wait_and_get_final_status(timeout=repair_timeout)
-            TestFrameworkEvent(source=self.__class__.__name__,
-                               message=f"Repair should not finish. Status: {task_final_status}",
-                               severity=Severity.CRITICAL).publish()
-        except WaitForTimeoutError:
-            self.log.info(f"Repair task {repair_task.id} did not finish as expected, continuing with scale out.")
-
-        self.scale_out()
-
-        task_final_status = repair_task.wait_and_get_final_status(timeout=repair_timeout)
-        if task_final_status != TaskStatus.DONE:
-            progress_full_string = repair_task.progress_string(
-                parse_table_res=False, is_verify_errorless_result=True).stdout
-            if task_final_status != TaskStatus.ERROR_FINAL:
-                repair_task.stop()
-            raise ScyllaManagerError(
-                f"Task: {repair_task.id} final status is: {task_final_status}.\nTask progress string: {progress_full_string}")
-        self.log.info(f"Task: {repair_task.id} is done.")
-
-        self.run_read_stress()
-
-    def test_oos_compaction(self):
-        """
-        Fill the cluster to 90%
-        Start another write, that would need more space than available
-        Write should fail, but the cluster should not run out of space
-        There should be no running compactions on the node that reached 98%
-        Scale out the cluster
-        There should be running compactions on the node that reached 98%
-        """
-        # fill to 90%
-        self.run_prepare_write_cmd()
-
-        # fill to 98%
-        with ignore_stress_errors():
-            self.run_write_stress()
-
-        # Check that the node that got to 98% does not have running compactions
-        sleep(1200)
-        threshold_node = max(self.db_cluster.nodes, key=self.get_disk_usage)
-        if self.get_compactions(threshold_node, interval=600) != 0:
-            TestFrameworkEvent(source=self.__class__.__name__,
-                               message=f"There should be no running compactions on node {threshold_node.name}",
-                               severity=Severity.ERROR).publish()
-
-        start_of_scale_out = time()
-        self.scale_out()
-        end_of_scale_out = time()
-
-        # Check that the node that got to 98% has running compactions
-        interval = int(end_of_scale_out - start_of_scale_out)
-        if self.get_compactions(threshold_node, interval=interval) == 0:
-            TestFrameworkEvent(source=self.__class__.__name__,
-                               message=f"There should have been running compactions on node {threshold_node.name} after scale out",
-                               severity=Severity.ERROR).publish()
-
-    def test_oos_streaming_rf_change(self):
-        """
-        Fill the cluster to 90% with RF=2
-        Alter the keyspaces's RF to 3 to force file-based streaming
-        The CQL command should time out, as there is not enough space for a new replica
-        Start a read with CL=THREE, it should fail
-        Scale out the cluster
-        Start a read with CL=THREE, it should succeed
-        """
-        self.run_prepare_write_cmd()
-        sleep(600)
-
-        # alter the table's RF to force file-based streaming
-        status = self.db_cluster.get_nodetool_status()
-        network_topology_strategy = NetworkTopologyReplicationStrategy(**{dc: 3 for dc in status})
-        node1 = self.db_cluster.nodes[0]
-        try:
-            node1.run_cqlsh(f"ALTER KEYSPACE keyspace1 WITH replication = {network_topology_strategy}", timeout=3600)
-        except UnexpectedExit as exc:
-            self.log.error(f"Alter keyspace times out as expected: {exc}")
-
-        replication_strategy = ReplicationStrategy.get(node1, 'keyspace1')
-        self.log.info(f"Replication strategy for keyspace keyspace1: {replication_strategy}")
-        if replication_strategy.replication_factors != [3]:
-            TestFrameworkEvent(source=self.__class__.__name__,
-                               message=f"Replication strategy for keyspace keyspace1 is not as expected: {replication_strategy}",
-                               severity=Severity.ERROR).publish()
-
-        with ignore_stress_errors():
-            self.run_read_stress(want_success=False)
-
-        self.scale_out()
-
-        self.run_read_stress()
-
-    def test_oos_streaming_decommission(self):
-        """
-        Fill the cluster to 90%
-        Decommission one node
-        Other nodes in the same rack should not go out of space
-        After adding another node to that rack the decommission should finish
-        """
-        self.run_prepare_write_cmd()
-        sleep(600)
-
-        node1 = self.db_cluster.nodes[0]
-        other_node_in_rack = next((n for n in self.db_cluster.nodes if n.rack == node1.rack and n != node1))
-        decommission_thread = Thread(target=self.db_cluster.decommission, args=(other_node_in_rack,),
-                                     kwargs={"timeout": MAX_TIME_WAIT_FOR_DECOMMISSION})
-        decommission_thread.start()
-
-        while decommission_thread.is_alive():
-            if self.get_disk_usage(node1) >= 98:
-                self.log.info(f"Node {node1.name} is at critical disk utilization, scaling out the cluster.")
-                self.scale_out(nr_nodes=1, rack=node1.rack)
-                break
             sleep(60)
 
-        decommission_thread.join()
-
-    def test_oos_secondary_index(self):
-        """
-        Fill the cluster to 90%
-        Create a secondary index on a column
-        Index creation should not finish, as there is not enough space
-        Scale out the cluster
-        Index creation should finish
-        Check that the index works by querying it
-        """
-        self.run_prepare_write_cmd()
-
-        # create index
-        ks = "keyspace1"
-        cf = "standard1"
-        column = "C0"
+    def wait_for_index(self, index_name: str, timeout: int, want_success: bool):
         node = self.db_cluster.nodes[0]
-        timeout = 2 * 3600
-
-        with self.db_cluster.cql_connection_patient(node, connect_timeout=300) as session:
-            index_name = create_index(session, ks, cf, column)
-
         try:
-            wait_for_index_to_be_built(node, ks, index_name, timeout=timeout)
+            wait_for_index_to_be_built(node, "keyspace1", index_name, timeout=timeout)
             TestFrameworkEvent(message="Index creation should not finish.", severity=Severity.CRITICAL).publish()
         except TimeoutError:
-            self.log.info(f"Index {index_name} creation timed out as expected")
+            if want_success:
+                raise
+            else:
+                self.log.info(f"Index {index_name} creation timed out as expected")
 
-        self.scale_out()
+        if want_success:
+            with self.db_cluster.cql_connection_patient(node, connect_timeout=300) as session:
+                verify_query_by_index_works(session, "keyspace1", "standard1", "C0")
 
-        wait_for_index_to_be_built(node, ks, index_name, timeout=timeout)
+    def wait_for_repair(self, repair_task: RepairTask, timeout: int, want_success: bool):
+        try:
+            task_final_status = repair_task.wait_and_get_final_status(timeout=timeout)
+            self.error_event(f"Repair should not finish. Status: {task_final_status}")
+        except WaitForTimeoutError:
+            if want_success:
+                raise
+            else:
+                self.log.info(f"Repair task {repair_task.id} did not finish as expected.")
 
-        with self.db_cluster.cql_connection_patient(node, connect_timeout=300) as session:
-            verify_query_by_index_works(session, ks, cf, column)
+        if want_success:
+            if task_final_status != TaskStatus.DONE:
+                progress_full_string = repair_task.progress_string(
+                    parse_table_res=False, is_verify_errorless_result=True).stdout
+                if task_final_status != TaskStatus.ERROR_FINAL:
+                    repair_task.stop()
+                raise ScyllaManagerError(
+                    f"Task: {repair_task.id} final status is: {task_final_status}.\nTask progress string: {progress_full_string}")
+            self.log.info(f"Task: {repair_task.id} is done.")
+
+    def test_oos_all(self):
+        # Fill cluster to 90%, restart nodes during
+        self.prepare_with_restarts()
+
+        # Write more data and restart one node at 97%
+        stress_thread = Thread(target=self.run_write_stress, kwargs={"want_success": False})
+        restart_thread = Thread(target=self.restart_at_97)
+        stress_thread.start()
+        restart_thread.start()
+
+        stress_thread.join()
+        try:
+            restart_thread.join(timeout=600)
+        except TimeoutError as e:
+            self.error_event(f"Error when trying to restart node at 97%: {e}")
+
+        # Check that the node that got to 98% does not have running compactions
+        sleep(1200)
+        threshold_node = max(self.db_cluster.nodes, key=self.get_disk_usage)
+        if self.get_compactions(threshold_node, interval=600) != 0:
+            self.error_event(f"Node {threshold_node.name} should not have running compactions on it")
+
+        # scale out to disable out of space controller
+        start_of_scale_out = time()
+        new_nodes = self.scale_out()
+
+        # Check that the node that got to 98% has running compactions
+        if self.get_compactions(threshold_node, interval=int(time() - start_of_scale_out)) == 0:
+            self.error_event(f"Node {threshold_node.name} should have had running compactions on it after scale out")
+
+        # check that after scale out writes are accepted
+        self.run_write_stress(want_success=True)
+
+        # reset for next part
+        self.drop_new_keyspace()
+        self.scale_in(new_nodes)
+
+        # create a secondary index
+        timeout = 3 * 3600
+
+        with self.db_cluster.cql_connection_patient(self.db_cluster.nodes[0], connect_timeout=300) as session:
+            index_name = create_index(session, "keyspace1", "standard1", "C0")
+
+        # start a repair at 97%
+        repair_task = None
+        while not repair_task:
+            if any(self.get_disk_usage(node) >= 97 for node in self.db_cluster.nodes):
+                mgr_cluster = self.db_cluster.get_cluster_manager()
+                repair_task = mgr_cluster.create_repair_task()
+                self.log.info(f"Repair task {repair_task.id} created.")
+            sleep(60)
+
+        ParallelObject.run_named_tasks_in_parallel(
+            tasks={
+                "repair": partial(self.wait_for_repair, repair_task, timeout, want_success=False),
+                "index": partial(self.wait_for_index, index_name, timeout, want_success=False)},
+            timeout=timeout + 5)
+
+        # reads with CL=THREE should fail because repair did not complete
+        self.run_read_stress(want_success=False)
+
+        # scale out to disable out of space controller
+        new_nodes = self.scale_out()
+
+        ParallelObject.run_named_tasks_in_parallel(
+            tasks={
+                "repair": partial(self.wait_for_repair, repair_task, timeout, want_success=True),
+                "index": partial(self.wait_for_index, index_name, timeout, want_success=True)},
+            timeout=timeout + 5)
+
+        # reads with CL=THREE should succeed because repair finished
+        self.run_read_stress(want_success=True)
