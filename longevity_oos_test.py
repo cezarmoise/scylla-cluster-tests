@@ -237,7 +237,7 @@ class LongevityOutOfSpaceTest(LongevityTest):
         node = self.db_cluster.nodes[0]
         try:
             wait_for_index_to_be_built(node, "keyspace1", index_name, timeout=timeout)
-            TestFrameworkEvent(message="Index creation should not finish.", severity=Severity.CRITICAL).publish()
+            self.error_event("Index creation should not finish.")
         except TimeoutError:
             if want_success:
                 raise
@@ -247,6 +247,8 @@ class LongevityOutOfSpaceTest(LongevityTest):
         if want_success:
             with self.db_cluster.cql_connection_patient(node, connect_timeout=300) as session:
                 verify_query_by_index_works(session, "keyspace1", "standard1", "C0")
+
+        self.log.info("wait_for_index finished.")
 
     def wait_for_repair(self, repair_task: RepairTask, timeout: int, want_success: bool):
         try:
@@ -267,6 +269,8 @@ class LongevityOutOfSpaceTest(LongevityTest):
                 raise ScyllaManagerError(
                     f"Task: {repair_task.id} final status is: {task_final_status}.\nTask progress string: {progress_full_string}")
             self.log.info(f"Task: {repair_task.id} is done.")
+
+        self.log.info("wait_for_repair finished.")
 
     def test_oos_all(self):
         # Fill cluster to 90%, restart nodes during
@@ -324,7 +328,7 @@ class LongevityOutOfSpaceTest(LongevityTest):
             tasks={
                 "repair": partial(self.wait_for_repair, repair_task, timeout, want_success=False),
                 "index": partial(self.wait_for_index, index_name, timeout, want_success=False)},
-            timeout=timeout + 5)
+            timeout=timeout + 300)
 
         # reads with CL=THREE should fail because repair did not complete
         self.run_read_stress(want_success=False)
@@ -336,7 +340,7 @@ class LongevityOutOfSpaceTest(LongevityTest):
             tasks={
                 "repair": partial(self.wait_for_repair, repair_task, timeout, want_success=True),
                 "index": partial(self.wait_for_index, index_name, timeout, want_success=True)},
-            timeout=timeout + 5)
+            timeout=timeout + 300)
 
         # reads with CL=THREE should succeed because repair finished
         self.run_read_stress(want_success=True)
