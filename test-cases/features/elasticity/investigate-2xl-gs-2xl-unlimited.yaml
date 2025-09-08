@@ -11,7 +11,6 @@ prepare_write_cmd: [
 
 stress_cmd_m: cassandra-stress mixed no-warmup cl=QUORUM duration=800m -schema 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=150 fixed=20000/s' -col 'size=FIXED(128) n=FIXED(8)' -pop 'dist=gauss(1..180000000,90000000,1800000)'
 
-
 n_db_nodes: 3
 simulated_racks: 3
 instance_type_db: 'i4i.2xlarge'
