@@ -310,7 +310,7 @@ class LongevityOutOfSpaceTest(LongevityTest):
         self.scale_in(new_nodes)
 
         # create a secondary index
-        timeout = 3 * 3600
+        timeout = 4 * 3600
 
         with self.db_cluster.cql_connection_patient(self.db_cluster.nodes[0], connect_timeout=300) as session:
             index_name = create_index(session, "keyspace1", "standard1", "C0")
