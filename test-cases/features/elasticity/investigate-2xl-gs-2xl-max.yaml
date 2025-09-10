@@ -33,4 +33,4 @@ email_recipients: ["scylla-perf-results@scylladb.com"]
 email_subject_postfix: 'elasticity test'
 
 append_scylla_yaml:
-  stream_io_throughput_mb_per_sec: 0
+  stream_io_throughput_mb_per_sec: 1250
