@@ -310,8 +310,6 @@ class LongevityOutOfSpaceTest(LongevityTest):
         self.scale_in(new_nodes)
 
         # create a secondary index
-        timeout = 4 * 3600
-
         with self.db_cluster.cql_connection_patient(self.db_cluster.nodes[0], connect_timeout=300) as session:
             index_name = create_index(session, "keyspace1", "standard1", "C0")
 
@@ -324,11 +322,12 @@ class LongevityOutOfSpaceTest(LongevityTest):
                 self.log.info(f"Repair task {repair_task.id} created.")
             sleep(60)
 
+        fail_timeout = 2 * 3600
         ParallelObject.run_named_tasks_in_parallel(
             tasks={
-                "repair": partial(self.wait_for_repair, repair_task, timeout, want_success=False),
-                "index": partial(self.wait_for_index, index_name, timeout, want_success=False)},
-            timeout=timeout + 300)
+                "repair": partial(self.wait_for_repair, repair_task, fail_timeout, want_success=False),
+                "index": partial(self.wait_for_index, index_name, fail_timeout, want_success=False)},
+            timeout=fail_timeout + 300)
 
         # reads with CL=THREE should fail because repair did not complete
         self.run_read_stress(want_success=False)
@@ -336,11 +335,12 @@ class LongevityOutOfSpaceTest(LongevityTest):
         # scale out to disable out of space controller
         new_nodes = self.scale_out()
 
+        success_timeout = 6 * 3600
         ParallelObject.run_named_tasks_in_parallel(
             tasks={
-                "repair": partial(self.wait_for_repair, repair_task, timeout, want_success=True),
-                "index": partial(self.wait_for_index, index_name, timeout, want_success=True)},
-            timeout=timeout + 300)
+                "repair": partial(self.wait_for_repair, repair_task, success_timeout, want_success=True),
+                "index": partial(self.wait_for_index, index_name, success_timeout, want_success=True)},
+            timeout=success_timeout + 300)
 
         # reads with CL=THREE should succeed because repair finished
         self.run_read_stress(want_success=True)
