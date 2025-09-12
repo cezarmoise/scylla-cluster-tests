@@ -32,7 +32,7 @@ from sdcm.sct_events.system import InfoEvent, TestFrameworkEvent
 from sdcm.utils.adaptive_timeouts import Operations, adaptive_timeout
 from sdcm.utils.common import ParallelObject
 from sdcm.utils.decorators import retrying
-from sdcm.utils.nemesis_utils.indexes import create_index, verify_query_by_index_works, wait_for_index_to_be_built
+from sdcm.utils.nemesis_utils.indexes import create_index, drop_index, verify_query_by_index_works, wait_for_index_to_be_built
 from sdcm.utils.tablets.common import wait_no_tablets_migration_running
 from threading import Thread
 
@@ -237,7 +237,8 @@ class LongevityOutOfSpaceTest(LongevityTest):
         node = self.db_cluster.nodes[0]
         try:
             wait_for_index_to_be_built(node, "keyspace1", index_name, timeout=timeout)
-            self.error_event("Index creation should not finish.")
+            if not want_success:
+                self.error_event("Index creation should not finish.")
         except TimeoutError:
             if want_success:
                 raise
@@ -247,13 +248,15 @@ class LongevityOutOfSpaceTest(LongevityTest):
         if want_success:
             with self.db_cluster.cql_connection_patient(node, connect_timeout=300) as session:
                 verify_query_by_index_works(session, "keyspace1", "standard1", "C0")
+                drop_index(session, "keyspace1", index_name)
 
         self.log.info("wait_for_index finished.")
 
     def wait_for_repair(self, repair_task: RepairTask, timeout: int, want_success: bool):
         try:
             task_final_status = repair_task.wait_and_get_final_status(timeout=timeout)
-            self.error_event(f"Repair should not finish. Status: {task_final_status}")
+            if not want_success:
+                self.error_event(f"Repair should not finish. Status: {task_final_status}")
         except WaitForTimeoutError:
             if want_success:
                 raise
@@ -270,44 +273,13 @@ class LongevityOutOfSpaceTest(LongevityTest):
                     f"Task: {repair_task.id} final status is: {task_final_status}.\nTask progress string: {progress_full_string}")
             self.log.info(f"Task: {repair_task.id} is done.")
 
+        self.run_read_stress(want_success=want_success)
+
         self.log.info("wait_for_repair finished.")
 
     def test_oos_all(self):
         # Fill cluster to 90%, restart nodes during
         self.prepare_with_restarts()
-
-        # Write more data and restart one node at 97%
-        stress_thread = Thread(target=self.run_write_stress, kwargs={"want_success": False})
-        restart_thread = Thread(target=self.restart_at_97)
-        stress_thread.start()
-        restart_thread.start()
-
-        stress_thread.join()
-        try:
-            restart_thread.join(timeout=600)
-        except TimeoutError as e:
-            self.error_event(f"Error when trying to restart node at 97%: {e}")
-
-        # Check that the node that got to 98% does not have running compactions
-        sleep(1200)
-        threshold_node = max(self.db_cluster.nodes, key=self.get_disk_usage)
-        if self.get_compactions(threshold_node, interval=600) != 0:
-            self.error_event(f"Node {threshold_node.name} should not have running compactions on it")
-
-        # scale out to disable out of space controller
-        start_of_scale_out = time()
-        new_nodes = self.scale_out()
-
-        # Check that the node that got to 98% has running compactions
-        if self.get_compactions(threshold_node, interval=int(time() - start_of_scale_out)) == 0:
-            self.error_event(f"Node {threshold_node.name} should have had running compactions on it after scale out")
-
-        # check that after scale out writes are accepted
-        self.run_write_stress(want_success=True)
-
-        # reset for next part
-        self.drop_new_keyspace()
-        self.scale_in(new_nodes)
 
         # create a secondary index
         with self.db_cluster.cql_connection_patient(self.db_cluster.nodes[0], connect_timeout=300) as session:
@@ -329,9 +301,6 @@ class LongevityOutOfSpaceTest(LongevityTest):
                 "index": partial(self.wait_for_index, index_name, fail_timeout, want_success=False)},
             timeout=fail_timeout + 300)
 
-        # reads with CL=THREE should fail because repair did not complete
-        self.run_read_stress(want_success=False)
-
         # scale out to disable out of space controller
         new_nodes = self.scale_out()
 
@@ -342,5 +311,34 @@ class LongevityOutOfSpaceTest(LongevityTest):
                 "index": partial(self.wait_for_index, index_name, success_timeout, want_success=True)},
             timeout=success_timeout + 300)
 
-        # reads with CL=THREE should succeed because repair finished
-        self.run_read_stress(want_success=True)
+        # reset for next part
+        self.scale_in(new_nodes)
+
+        # Write more data and restart one node at 97%
+        stress_thread = Thread(target=self.run_write_stress, kwargs={"want_success": False})
+        restart_thread = Thread(target=self.restart_at_97)
+        stress_thread.start()
+        restart_thread.start()
+
+        stress_thread.join()
+        try:
+            restart_thread.join(timeout=600)
+        except TimeoutError as e:
+            self.error_event(f"Error when trying to restart node at 97%: {e}")
+
+        # Check that the node that got to 98% does not have running compactions
+        sleep(1200)
+        threshold_node = max(self.db_cluster.nodes, key=self.get_disk_usage)
+        if self.get_compactions(threshold_node, interval=600) != 0:
+            self.error_event(f"Node {threshold_node.name} should not have running compactions on it")
+
+        # scale out to disable out of space controller
+        start_of_scale_out = time()
+        self.scale_out()
+
+        # Check that the node that got to 98% has running compactions
+        if self.get_compactions(threshold_node, interval=int(time() - start_of_scale_out)) == 0:
+            self.error_event(f"Node {threshold_node.name} should have had running compactions on it after scale out")
+
+        # check that after scale out writes are accepted
+        self.run_write_stress(want_success=True)
