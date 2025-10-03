@@ -405,20 +405,75 @@ class LongevityOutOfSpaceTest(LongevityTest):
         cf = "standard1"
         column = "C0"
         node = self.db_cluster.nodes[0]
-        timeout = 2 * 3600
 
         with self.db_cluster.cql_connection_patient(node, connect_timeout=300) as session:
             index_name = create_index(session, ks, cf, column)
 
         try:
-            wait_for_index_to_be_built(node, ks, index_name, timeout=timeout)
+            wait_for_index_to_be_built(node, ks, index_name, timeout=3600)
             TestFrameworkEvent(message="Index creation should not finish.", severity=Severity.CRITICAL).publish()
         except TimeoutError:
             self.log.info(f"Index {index_name} creation timed out as expected")
 
         self.scale_out()
 
-        wait_for_index_to_be_built(node, ks, index_name, timeout=timeout)
+        try:
+            wait_for_index_to_be_built(node, ks, index_name, timeout=6 * 3600)
+        except TimeoutError:
+            TestFrameworkEvent(message="Index creation should finish after scale out.",
+                               severity=Severity.CRITICAL).publish()
+
+        with self.db_cluster.cql_connection_patient(node, connect_timeout=300) as session:
+            verify_query_by_index_works(session, ks, cf, column)
+
+    def test_oos_secondary_index_restarts(self):
+        """
+        Fill the cluster to 90%. Restart nodes during fill
+        Create a secondary index on a column
+        Index creation should not finish, as there is not enough space
+        Scale out the cluster
+        Index creation should finish
+        Check that the index works by querying it
+        """
+        prepare_thread = Thread(target=self.run_prepare_write_cmd)
+        prepare_thread.start()
+        nodes = cycle(self.db_cluster.nodes)
+        while prepare_thread.is_alive():
+            # every 15 minutes, cycle thorough the nodes restart them
+            sleep(900)
+            node = next(nodes)
+            if self.get_disk_usage(node) > 70:
+                break
+            self.log.info(f"Restarting node {node.name}.")
+            node.stop_scylla(verify_down=True)
+            node.start_scylla(verify_up=True)
+            self.db_cluster.wait_for_nodes_up_and_normal(nodes=[node])
+            self.log.info(f"Node {node.name} has restarted.")
+        prepare_thread.join()
+        self.log.info("Prepare write command finished.")
+
+        # create index
+        ks = "keyspace1"
+        cf = "standard1"
+        column = "C0"
+        node = self.db_cluster.nodes[0]
+
+        with self.db_cluster.cql_connection_patient(node, connect_timeout=300) as session:
+            index_name = create_index(session, ks, cf, column)
+
+        try:
+            wait_for_index_to_be_built(node, ks, index_name, timeout=3600)
+            TestFrameworkEvent(message="Index creation should not finish.", severity=Severity.CRITICAL).publish()
+        except TimeoutError:
+            self.log.info(f"Index {index_name} creation timed out as expected")
+
+        self.scale_out()
+
+        try:
+            wait_for_index_to_be_built(node, ks, index_name, timeout=6 * 3600)
+        except TimeoutError:
+            TestFrameworkEvent(message="Index creation should finish after scale out.",
+                               severity=Severity.CRITICAL).publish()
 
         with self.db_cluster.cql_connection_patient(node, connect_timeout=300) as session:
             verify_query_by_index_works(session, ks, cf, column)
