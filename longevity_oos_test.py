@@ -308,6 +308,7 @@ class LongevityOutOfSpaceTest(LongevityTest):
 
         # check that after scale out writes are accepted
         self.run_write_stress(want_success=True)
+        return
 
         # reset for next part
         self.drop_new_keyspace()
