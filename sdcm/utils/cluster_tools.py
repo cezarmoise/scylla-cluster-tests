@@ -84,7 +84,7 @@ def major_compaction_nodes(cluster, keyspace: str, table: str):
     LOGGER.debug("Run a major compaction on cluster data nodes")
     triggers = [partial(node.run_nodetool, sub_cmd="compact", args=f"{keyspace} {table}", ) for
                 node in cluster.data_nodes]
-    ParallelObject(objects=triggers, timeout=3000).call_objects()
+    ParallelObject(objects=triggers, timeout=10800).call_objects()
 
 
 def clear_snapshot_nodes(cluster):
