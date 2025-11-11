@@ -226,6 +226,7 @@ class NemesisFlags:
     delete_rows: bool = False  # A flag denotes a nemesis deletes partitions/rows, generating tombstones.
     zero_node_changes: bool = False
     sla: bool = False               # flag that signal that nemesis is used for SLA tests
+    harry: bool = True             # flag that signal that nemesis is compatible with cassandra-harry tests
 
 
 class Nemesis(NemesisFlags):
@@ -6199,6 +6200,7 @@ class EnospcMonkey(Nemesis):
     disruptive = True
     kubernetes = True
     limited = True
+    harry = False
 
     def disrupt(self):
         self.disrupt_nodetool_enospc()
@@ -6207,6 +6209,7 @@ class EnospcMonkey(Nemesis):
 class EnospcAllNodesMonkey(Nemesis):
     disruptive = True
     kubernetes = True
+    harry = False
 
     def disrupt(self):
         self.disrupt_nodetool_enospc(all_nodes=True)
