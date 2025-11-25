@@ -4295,10 +4295,11 @@ class Nemesis(NemesisFlags):
         self.clear_snapshots()
 
     @latency_calculator_decorator(legend="Adding new nodes")
-    def add_new_nodes(self, count, rack=None, instance_type: str = None) -> list[BaseNode]:
+    def add_new_nodes(self, count, rack=None, instance_type: str = None, wait_for_tablets_migration=True) -> list[BaseNode]:
         nodes = self._add_and_init_new_cluster_nodes(count, rack=rack, instance_type=instance_type)
         self.actions_log.info(f'New nodes added: {", ".join(node.name for node in nodes)}')
-        wait_no_tablets_migration_running(nodes[0])
+        if wait_for_tablets_migration:
+            wait_no_tablets_migration_running(nodes[0])
         return nodes
 
     @latency_calculator_decorator(legend="Decommission nodes: remove nodes from cluster")
@@ -4361,7 +4362,7 @@ class Nemesis(NemesisFlags):
         if not self.has_steady_run and sleep_time_between_ops:
             self.steady_state_latency()
             self.has_steady_run = True
-        new_nodes = self._grow_cluster(rack=None)
+        new_nodes = self._grow_cluster(rack=None, wait_for_tablets_migration=False)
 
         # pass on the exact nodes only if we have specific types for them
         new_nodes = new_nodes if self.tester.params.get('nemesis_grow_shrink_instance_type') else None
@@ -4381,20 +4382,20 @@ class Nemesis(NemesisFlags):
         self._grow_cluster(rack)
         self._shrink_cluster(rack)
 
-    def _grow_cluster(self, rack=None):
+    def _grow_cluster(self, rack=None, wait_for_tablets_migration=True):
         if rack is None and self._is_it_on_kubernetes():
             rack = 0
         add_nodes_number = self.tester.params.get('nemesis_add_node_cnt')
         new_nodes = []
         with self.action_log_scope(f"Grow cluster by {add_nodes_number} nodes"):
             if self.cluster.parallel_node_operations:
-                new_nodes = self.add_new_nodes(count=add_nodes_number, rack=rack,
+                new_nodes = self.add_new_nodes(count=add_nodes_number, rack=rack, wait_for_tablets_migration=wait_for_tablets_migration,
                                                instance_type=self.tester.params.get('nemesis_grow_shrink_instance_type'))
             else:
                 for idx in range(add_nodes_number):
                     # if rack is not specified, round-robin racks to spread nodes evenly
                     rack_idx = rack if rack is not None else idx % self.cluster.racks_count
-                    new_nodes += self.add_new_nodes(count=1, rack=rack_idx,
+                    new_nodes += self.add_new_nodes(count=1, rack=rack_idx, wait_for_tablets_migration=wait_for_tablets_migration,
                                                     instance_type=self.tester.params.get('nemesis_grow_shrink_instance_type'))
         time.sleep(self.interval)
         return new_nodes
