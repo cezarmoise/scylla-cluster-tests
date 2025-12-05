@@ -58,6 +58,7 @@ from sdcm.cluster import (
     DB_LOG_PATTERN_RESHARDING_FINISH,
     MAX_TIME_WAIT_FOR_NEW_NODE_UP,
     MAX_TIME_WAIT_FOR_DECOMMISSION,
+    ClusterNodesNotReady,
     NodeSetupFailed,
     NodeSetupTimeout, HOUR_IN_SEC,
     NodeCleanedAfterDecommissionAborted,
@@ -5714,6 +5715,62 @@ class Nemesis(NemesisFlags):
                 with self.cluster.cql_connection_patient(node=working_node, connect_timeout=600) as session:
                     drop_materialized_view(session, ks_name, view_name)
 
+    @target_data_nodes
+    def disrupt_abort_decommission(self):
+        if len([n for n in self.cluster.data_nodes if n.rack == self.target_node.rack]) < 2:
+            raise UnsupportedNemesis(
+                f"Not enough nodes in rack {self.target_node.rack} to run nemesis")
+
+        def decommission():
+            try:
+                with EventsSeverityChangerFilter(
+                        new_severity=Severity.WARNING,
+                        event_class=DatabaseLogEvent,
+                        extra_time_to_expiration=30,
+                        regex=r".*Decommission failed. See earlier errors \(aborted on user request\).*"):
+                    self.target_node.run_nodetool(
+                        sub_cmd="decommission",
+                        warning_event_on_exception=(UnexpectedExit, Libssh2UnexpectedExit),
+                        long_running=True,
+                        retry=0)
+            except (UnexpectedExit, Libssh2UnexpectedExit) as ex:
+                if "Decommission failed. See earlier errors (aborted on user request)" in ex.stdout + ex.stderr:
+                    self.actions_log.info("Decommission was aborted as expected")
+                else:
+                    raise
+
+        def abort():
+            def _get_decommission_task():
+                host_id = self.target_node.host_id
+                res = self.target_node.run_nodetool("tasks list node_ops")
+                for line in res.stdout.splitlines()[1:]:
+                    if "decommission" in line and host_id in line:
+                        return line.split()[0]
+
+            task_id = wait_for(_get_decommission_task, step=1, timeout=300, throw_exc=True)
+            time.sleep(10)  # let decommission run for a while before aborting
+            self.target_node.run_nodetool(f"tasks abort {task_id}", warning_event_on_exception=(
+                UnexpectedExit, Libssh2UnexpectedExit), retry=0)
+            # This will wait until either abort finishes, or, if abort fails, until decommission finishes
+            self.target_node.run_nodetool(f"tasks wait {task_id}")
+
+        target_is_seed = self.target_node.is_seed
+        ParallelObject(objects=[decommission, abort], timeout=600).call_objects()
+
+        # Validate that node is still part of the cluster
+        try:
+            self.cluster.wait_for_nodes_up_and_normal(nodes=[self.target_node], timeout=60)
+        except ClusterNodesNotReady as ex:
+            self.log.warning(
+                f"Node {self.target_node.name} is no longer part of the cluster: {ex}. Adding a new node to replace it.")
+            self.monitoring_set.reconfigure_scylla_monitoring()
+            # If decommission succeeded despite abort, add a new node to replace it
+            new_node = self.add_new_nodes(count=1, rack=self.target_node.rack)[0]
+            if new_node.is_seed != target_is_seed:
+                new_node.set_seed_flag(target_is_seed)
+                self.cluster.update_seed_provider()
+            self.log.info(f"Added new node {new_node.name} to replace decommissioned node {self.target_node.name}")
+
 
 def disrupt_method_wrapper(method, is_exclusive=False):  # noqa: PLR0915
     """
@@ -7109,3 +7166,11 @@ class KillMVBuildingCoordinator(Nemesis):
 
     def disrupt(self):
         self.disrupt_kill_mv_building_coordinator()
+
+
+class AbortDecommissionNemesis(Nemesis):
+    disruptive = True
+    topology_changes = True
+
+    def disrupt(self):
+        self.disrupt_abort_decommission()
