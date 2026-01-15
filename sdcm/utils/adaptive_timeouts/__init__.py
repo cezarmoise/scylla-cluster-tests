@@ -1,4 +1,5 @@
 import logging
+import math
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, nullcontext
@@ -26,9 +27,29 @@ def _get_decommission_timeout(
     """Calculate timeout for decommission operation based on node load info. Still experimental, used to gather historical data."""
     try:
         node_info = node_info_service.as_dict()
+        LOGGER.info(f"Calculating decommission timeout with node info: {node_info}")
         if tablets_enabled:
             node_info["tablets_enabled"] = True
-            return (TABLETS_SOFT_TIMEOUT, TABLETS_HARD_TIMEOUT), node_info
+            # from https://docs.aws.amazon.com/ec2/latest/instancetypes/so.html#so_network
+            base_bandwidth = 0.781  # baseline bandwidth in Gbps for 2 shards
+            shard_adjustment = node_info["shards_count"] / 2  # bandwidth scales linearly with number of CPUs
+            throughput_multiplier = 0.75  # stream_io_throughput_mb_per_sec is set to 75% of bandwidth
+            unit_conversion = 1000**3 / (8 * 1024 * 1024)  # convert Gbps to MB/s
+
+            node_bandwidth = int(base_bandwidth * shard_adjustment * throughput_multiplier * unit_conversion)  # in MB/s
+            node_size = node_info_service.node_data_size_mb  # in MB
+            expected_decommission_streaming_time = int(node_size / node_bandwidth)  # in seconds
+            LOGGER.info(f"{node_size=}MB, {node_bandwidth=}MB/s, {expected_decommission_streaming_time=}s")
+
+            # soft timeout is twice as slow as expected streaming time
+            soft_timeout = expected_decommission_streaming_time * 2
+            # round to nearest TABLETS_SOFT_TIMEOUT
+            soft_timeout = math.ceil(soft_timeout / TABLETS_SOFT_TIMEOUT) * TABLETS_SOFT_TIMEOUT
+            # hard timeout is six times as slow as expected streaming time
+            hard_timeout = expected_decommission_streaming_time * 6
+            # round to nearest TABLETS_HARD_TIMEOUT
+            hard_timeout = math.ceil(hard_timeout / TABLETS_HARD_TIMEOUT) * TABLETS_HARD_TIMEOUT
+            return (soft_timeout, hard_timeout), node_info
 
         # For non-tablet cases, calculate based on data size
         # rough estimation from previous runs almost 9h for 1TB
