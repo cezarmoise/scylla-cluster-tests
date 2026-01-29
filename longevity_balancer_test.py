@@ -24,6 +24,8 @@ from sdcm.utils.adaptive_timeouts import Operations, adaptive_timeout
 from sdcm.utils.common import ParallelObject, get_node_disk_usage
 from sdcm.utils.tablets.common import wait_no_tablets_migration_running
 
+# Per requirement, load balance difference should be bellow 5% for nodes in the same rack
+# https://scylladb.atlassian.net/wiki/spaces/RND/pages/5505671/Size-Based+Load+Balancing+Requirement+Document#Performance
 BALANCE_THRESHOLD = 5
 
 
@@ -50,7 +52,7 @@ class LongevityBalancerTest(LongevityTest):
         for _ in range(3):
             ParallelObject(objects=self.db_cluster.data_nodes, timeout=3600).run(wait_no_tablets_migration_running)
 
-    def check_final_balance(self):
+    def check_balance(self):
         rack_usages = defaultdict(list)
         for node in self.db_cluster.data_nodes:
             rack_usages[node.rack].append(get_node_disk_usage(node))
@@ -62,7 +64,7 @@ class LongevityBalancerTest(LongevityTest):
                 TestFrameworkEvent(
                     source="longevity_balancer_test",
                     message=f"Storage utilization is not balanced in rack {rack}. Min: {min_utilization:.2f}%, Max: {max_utilization:.2f}%",
-                    severity=Severity.CRITICAL,
+                    severity=Severity.ERROR,
                 ).publish()
 
     def scale_out(self):
@@ -118,7 +120,9 @@ class LongevityBalancerTest(LongevityTest):
         with PeriodicDiskUsageToArgus(self.db_cluster, self.test_config.argus_client(), interval=600):
             self.run_prepare_write_cmd()
             new_nodes = self.scale_out()
+            self.wait_for_balance()
+            self.check_balance()
             self.run_stress_command()
             self.scale_in(new_nodes)
             self.wait_for_balance()
-            self.check_final_balance()
+            self.check_balance()
