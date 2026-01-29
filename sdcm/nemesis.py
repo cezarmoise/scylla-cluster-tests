@@ -7355,7 +7355,7 @@ class ManagerRcloneBackup(NemesisRunner):
     disruptive = False
     supports_high_disk_utilization = False
 
-    def disrupt(self):
+    def call_next_nemesis(self):
         self.disrupt_manager_backup(object_storage_upload_mode=ObjectStorageUploadMode.RCLONE, label="rclone_backup")
 
 
@@ -7364,7 +7364,7 @@ class ManagerNativeBackup(NemesisRunner):
     disruptive = False
     supports_high_disk_utilization = False
 
-    def disrupt(self):
+    def call_next_nemesis(self):
         self.disrupt_manager_backup(object_storage_upload_mode=ObjectStorageUploadMode.NATIVE, label="native_backup")
 
 
@@ -7377,8 +7377,6 @@ COMPLEX_NEMESIS = [
     DisruptKubernetesNodeThenDecommissionAndAddScyllaNode,
     CategoricalMonkey,
     NemesisSequence,
-    ManagerNativeBackup,
-    ManagerRcloneBackup,
 ]
 
 
