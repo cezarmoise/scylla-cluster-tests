@@ -406,3 +406,27 @@ class LongevityOutOfSpaceTest(LongevityTest):
 
         with self.db_cluster.cql_connection_patient(node, connect_timeout=300) as session:
             verify_query_by_index_works(session, ks, cf, column)
+
+    def test_oos_streaming_decommission(self):
+        """
+        Fill the cluster to 90%
+        Decommission one node
+        Other nodes in the same rack should not go out of space
+        After adding another node to that rack the decommission should finish
+        """
+        self.run_prepare_write_cmd()
+        sleep(600)
+
+        node1 = self.db_cluster.nodes[0]
+        other_node_in_rack = next((n for n in self.db_cluster.nodes if n.rack == node1.rack and n != node1))
+        decommission_thread = Thread(target=self.db_cluster.decommission, args=(other_node_in_rack,))
+        decommission_thread.start()
+
+        while decommission_thread.is_alive():
+            if self.get_disk_usage(node1) >= 98:
+                self.log.info(f"Node {node1.name} is at critical disk utilization, scaling out the cluster.")
+                self.scale_out(nr_nodes=1, rack=node1.rack)
+                break
+            sleep(60)
+
+        decommission_thread.join()
