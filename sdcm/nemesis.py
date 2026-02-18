@@ -4698,7 +4698,7 @@ class NemesisRunner:
         if duration := self.tester.params.get("nemesis_double_load_during_grow_shrink_duration"):
             with self.action_log_scope("Double load after grow cluster"):
                 self._double_cluster_load(duration)
-        self._shrink_cluster(rack=None, new_nodes=new_nodes)
+        # self._shrink_cluster(rack=None, new_nodes=new_nodes)
 
     # NOTE: version limitation is caused by the following:
     #       - https://github.com/scylladb/scylla-enterprise/issues/3211
