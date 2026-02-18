@@ -780,7 +780,7 @@ class PerformanceRegressionTest(ClusterTester, loader_utils.LoaderUtilsMixin):
     def test_latency_mixed_with_nemesis(self):
         self.run_fstrim_on_all_db_nodes()
         self.preload_data()
-        self.wait_no_compactions_running(n=160)
+        self.wait_no_compactions_running(n=240)
         self.run_fstrim_on_all_db_nodes()
         self.run_workload(stress_cmd=self.params.get("stress_cmd_m"), nemesis=True, sub_type="mixed")
 
