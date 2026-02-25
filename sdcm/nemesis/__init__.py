@@ -32,7 +32,7 @@ import traceback
 import json
 import itertools
 from abc import ABC, abstractmethod
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from datetime import timedelta
 from typing import Any, List, Optional, Callable, Dict, Union, Iterable, TYPE_CHECKING
 from functools import wraps, partial, cached_property
@@ -6262,6 +6262,28 @@ def disrupt_method_wrapper(method, caller_obj: "NemesisBaseClass", is_exclusive=
         except Exception as err:  # noqa: BLE001
             caller.log.debug(f"Data validator error: {err}")
 
+    def method_context():
+        target_node = caller_obj.runner.target_node
+        contexts = []
+        if caller_obj.networking:
+
+            @contextmanager
+            def _ignore_raft_log_errors():
+                with ExitStack() as stack:
+                    stack.enter_context(
+                        EventsSeverityChangerFilter(
+                            new_severity=Severity.WARNING,
+                            event_class=DatabaseLogEvent.DATABASE_ERROR,
+                            regex=rf".*audit - Unexpected exception when writing login log with: node_ip {target_node.public_ip_address}.*"
+                            r"Cannot achieve consistency level for cl ONE",
+                        )
+                    )
+                    yield
+
+            contexts.append(_ignore_raft_log_errors)
+
+        return contexts
+
     @wraps(method)
     def wrapper(*args, **kwargs):  # noqa: PLR0912, PLR0914, PLR0915
         method_name = method.__self__.__class__.__name__
@@ -6333,7 +6355,7 @@ def disrupt_method_wrapper(method, caller_obj: "NemesisBaseClass", is_exclusive=
                     nemesis=runner, class_name=class_name, method_name=method_name, start_time=start_time
                 )
                 try:
-                    result = method(*args, **kwargs)
+                    result = decorate_with_context(method_context())(method(*args, **kwargs))
                 except (UnsupportedNemesis, MethodVersionNotFound) as exp:
                     skip_reason = str(exp)
                     log_info.update({"subtype": "skipped", "skip_reason": skip_reason})
