@@ -147,8 +147,14 @@ class RaftFeatureOperations(ABC):
     def clean_group0_garbage(self, raise_exception: bool = False) -> None: ...
 
     def check_group0_tokenring_consistency(
-        self, group0_members: list[Group0Member], tokenring_members: list[TokenRingMember]
+        self,
+        group0_members: list[Group0Member],
+        tokenring_members: list[TokenRingMember],
+        limited_voters_enabled: bool | None = None,
     ) -> [HealthEventsGenerator | None]: ...
+
+    @abstractmethod
+    def get_group0_data_for_healthcheck(self) -> tuple[list[Group0Member], bool]: ...
 
     def get_message_waiting_timeout(self, message_position: MessagePosition) -> MessageTimeout:
         backend = self._node.parent_cluster.params["cluster_backend"]
@@ -235,6 +241,33 @@ class RaftFeature(RaftFeatureOperations):
 
         LOGGER.debug("Group0 members: %s", group0_members)
         return group0_members
+
+    def get_group0_data_for_healthcheck(self) -> tuple[list[Group0Member], bool]:
+        """Fetch group0 members and limited_voters flag in a single CQL session.
+
+        Combines get_group0_members() and is_group0_limited_voters_enabled() queries
+        to avoid opening multiple CQL sessions during health checks
+        (workaround for https://github.com/scylladb/python-driver/issues/614).
+        """
+        group0_members = []
+        limited_voters_enabled = False
+        try:
+            with self._node.parent_cluster.cql_connection_patient_exclusive(node=self._node) as session:
+                raft_group0_id = self.get_group0_id(session)
+                assert raft_group0_id, "Group0 id was not found"
+                rows = session.execute(
+                    f"select server_id, can_vote from system.raft_state "
+                    f"where group_id = {raft_group0_id} and disposition = 'CURRENT'"
+                ).all()
+                for row in rows:
+                    group0_members.append(Group0Member(host_id=str(row.server_id), voter=row.can_vote))
+                limited_voters_enabled = is_group0_limited_voters_enabled(session)
+        except Exception as exc:  # noqa: BLE001
+            err_msg = f"Get group0 healthcheck data failed with error: {exc}"
+            LOGGER.error(err_msg)
+
+        LOGGER.debug("Group0 members: %s", group0_members)
+        return group0_members, limited_voters_enabled
 
     def get_group0_non_voters(self) -> list[Group0Member]:
         """Get non-voter members in group0"""
@@ -401,12 +434,19 @@ class RaftFeature(RaftFeatureOperations):
         return not diff and not non_voters_ids and len(group0_ids) == len(token_ring_ids) == num_of_nodes
 
     def check_group0_tokenring_consistency(
-        self, group0_members: list[Group0Member], tokenring_members: list[TokenRingMember]
+        self,
+        group0_members: list[Group0Member],
+        tokenring_members: list[TokenRingMember],
+        limited_voters_enabled: bool | None = None,
     ) -> HealthEventsGenerator:
         """Check group0 and token ring consistency.
 
         This method generates health check events and never raises exceptions to avoid
         breaking the nemesis thread. Any exceptions are caught and converted to health events.
+
+        When limited_voters_enabled is provided, broken hosts are computed from the
+        pre-fetched data to avoid redundant CQL connections
+        (workaround for https://github.com/scylladb/python-driver/issues/614).
         """
         LOGGER.debug(
             "Check group0 and token ring consistency on node %s (host_id=%s)...", self._node.name, self._node.host_id
@@ -432,7 +472,21 @@ class RaftFeature(RaftFeatureOperations):
                 )
 
             token_ring_node_ids = [member.host_id for member in valid_tokenring_members]
-            broken_hosts = self.search_inconsistent_host_ids()
+
+            if limited_voters_enabled is not None:
+                # Compute broken hosts from pre-fetched data to avoid redundant CQL connections
+                group0_ids = {m.host_id for m in group0_members}
+                token_ring_id_set = set(token_ring_node_ids)
+                diff_ids = list(group0_ids - token_ring_id_set)
+                LOGGER.debug("Token rings members ids: %s", token_ring_id_set)
+                LOGGER.debug("Group0 members ids: %s", group0_ids)
+                LOGGER.debug("Group0 differs from token ring: %s", diff_ids)
+                broken_hosts = diff_ids
+                if not broken_hosts and not limited_voters_enabled:
+                    LOGGER.debug("Get non-voter member hostids")
+                    broken_hosts = [m.host_id for m in group0_members if not m.voter]
+            else:
+                broken_hosts = self.search_inconsistent_host_ids()
 
             for member in group0_members:
                 if member.host_id in token_ring_node_ids and member.host_id not in broken_hosts:
@@ -558,7 +612,10 @@ class NoRaft(RaftFeatureOperations):
         return len(token_ring_ids) == num_of_nodes
 
     def check_group0_tokenring_consistency(
-        self, group0_members: list[Group0Member], tokenring_members: list[TokenRingMember]
+        self,
+        group0_members: list[Group0Member],
+        tokenring_members: list[TokenRingMember],
+        limited_voters_enabled: bool | None = None,
     ) -> Generator[None, None, None]:
         LOGGER.debug("Raft feature is disabled on node %s (host_id=%s)", self._node.name, self._node.host_id)
 
@@ -568,6 +625,9 @@ class NoRaft(RaftFeatureOperations):
 
     def search_inconsistent_host_ids(self) -> list[str]:
         return []
+
+    def get_group0_data_for_healthcheck(self) -> tuple[list[Group0Member], bool]:
+        return [], False
 
 
 def get_raft_mode(node) -> RaftFeature | NoRaft:

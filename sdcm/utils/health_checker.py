@@ -278,6 +278,13 @@ def check_schema_agreement_in_gossip_and_peers(node, retries: int = CHECK_NODE_H
 
 
 def check_group0_tokenring_consistency(
-    group0_members: list[Group0Member], tokenring_members: list[TokenRingMember], current_node
+    group0_members: list[Group0Member],
+    tokenring_members: list[TokenRingMember],
+    current_node,
+    limited_voters_enabled: bool | None = None,
 ) -> HealthEventsGenerator:
-    return current_node.raft.check_group0_tokenring_consistency(group0_members, tokenring_members)
+    return current_node.raft.check_group0_tokenring_consistency(
+        group0_members,
+        tokenring_members,
+        limited_voters_enabled=limited_voters_enabled,
+    )

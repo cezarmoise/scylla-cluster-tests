@@ -3121,7 +3121,7 @@ class BaseNode(AutoSshContainerMixin):
         nodes_status = self.get_nodes_status()
         peers_details = self.get_peers_info() or {}
         gossip_info = self.get_gossip_info() or {}
-        group0_members = self.raft.get_group0_members()
+        group0_members, limited_voters_enabled = self.raft.get_group0_data_for_healthcheck()
         tokenring_members = self.get_token_ring_members()
 
         return itertools.chain(
@@ -3138,7 +3138,10 @@ class BaseNode(AutoSshContainerMixin):
             ),
             check_nulls_in_peers(gossip_info=gossip_info, peers_details=peers_details, current_node=self),
             check_group0_tokenring_consistency(
-                group0_members=group0_members, tokenring_members=tokenring_members, current_node=self
+                group0_members=group0_members,
+                tokenring_members=tokenring_members,
+                current_node=self,
+                limited_voters_enabled=limited_voters_enabled,
             ),
         )
 
