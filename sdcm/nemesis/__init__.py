@@ -2571,7 +2571,7 @@ class NemesisRunner:
 
     def _verify_using_timestamp_deletions(self, ks_cf: str, verification_queries: list[tuple[int, int, int]]):
         mv_not_configured = False
-        mv_table_name = ".".join([ks_cf.split(sep=".")[0], "view_test"])
+        mv_table_name = ".".join([ks_cf.split(".", maxsplit=1)[0], "view_test"])
         with self.cluster.cql_connection_patient(self.target_node, connect_timeout=300) as session:
             for pk, ck, ts in verification_queries:
                 result = session.execute(

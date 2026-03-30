@@ -20,7 +20,7 @@ def get_latest_tarball_url(package_name: str) -> tuple[str, str]:
 
 def download_tarball(url: str, dest_folder: Path) -> Path:
     """Downloads the tarball to the destination folder."""
-    tarball_path = dest_folder / url.split("/")[-1]
+    tarball_path = dest_folder / url.rsplit("/", maxsplit=1)[-1]
     response = requests.get(url, stream=True)
     with open(tarball_path, "wb") as f:
         f.write(response.content)
