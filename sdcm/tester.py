@@ -1535,8 +1535,6 @@ class ClusterTester(unittest.TestCase):
         # Normalize seeds to a list of ints (or None).
         if isinstance(nemesis_seeds, int):
             nemesis_seeds = [nemesis_seeds]
-        elif isinstance(nemesis_seeds, str):
-            nemesis_seeds = [int(seed) for seed in nemesis_seeds.split()]
 
         # Build the flat list of class names.  The old 'Class:N' count syntax and
         # space-separated strings are no longer supported — use an explicit YAML list.

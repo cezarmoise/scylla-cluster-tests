@@ -184,6 +184,23 @@ def int_or_space_separated_ints(value: str | int | list[int]) -> int | list[int]
 IntOrList = Annotated[int | list[int], BeforeValidator(int_or_space_separated_ints)]
 
 
+def int_or_list_of_ints(value: int | list[int] | None) -> int | list[int] | None:
+    """Strict validator: accepts only int, list of ints, or None. Rejects strings."""
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, list):
+        try:
+            return [int(v) for v in value]
+        except (ValueError, TypeError) as exc:
+            raise ValueError(f"{value} isn't a list of integers") from exc
+    raise ValueError(f"{value!r} isn't an int or list of ints — strings are not accepted")
+
+
+IntOrListStrict = Annotated[int | list[int], BeforeValidator(int_or_list_of_ints)]
+
+
 def boolean_or_space_separated_booleans(value: bool | list[bool] | str | None) -> bool | list[bool] | None:  # noqa: PLR0911
     """Convert value to a single bool or list of bools.
 
@@ -896,7 +913,7 @@ class SCTConfiguration(BaseModel):
     nemesis_during_prepare: MultitenantValue(BooleanOrList) = SctField(
         description="""Run nemesis during prepare stage of the test""",
     )
-    nemesis_seed: MultitenantValue(IntOrList) = SctField(
+    nemesis_seed: MultitenantValue(IntOrListStrict) = SctField(
         description="""A seed number in order to repeat nemesis sequence as part of SisyphusMonkey""",
     )
     nemesis_add_node_cnt: MultitenantValue(IntOrList) = SctField(
@@ -3362,12 +3379,7 @@ class SCTConfiguration(BaseModel):
 
         seeds = self.get("nemesis_seed")
         if seeds is not None:
-            if isinstance(seeds, int):
-                seeds_list = [seeds]
-            elif isinstance(seeds, str):
-                seeds_list = seeds.split()
-            else:
-                seeds_list = seeds
+            seeds_list = [seeds] if isinstance(seeds, int) else seeds
             if len(seeds_list) > 1 and len(seeds_list) != num_threads:
                 raise ValueError(
                     f"'nemesis_seed' has {len(seeds_list)} entries but 'nemesis_class_name' has "
