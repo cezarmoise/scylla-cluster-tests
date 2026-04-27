@@ -1,0 +1,13 @@
+#!groovy
+
+// trick from https://github.com/jenkinsci/workflow-cps-global-lib-plugin/pull/43
+def lib = library identifier: 'sct@snapshot', retriever: legacySCM(scm)
+
+longevityPipeline(
+    backend: 'aws',
+    region: "us-east-1",
+    provision_type: 'on_demand',
+    billing_project: 'Trie-based index',
+    test_name: 'gemini_test.GeminiTest.test_load_random_with_nemesis',
+    test_config: '''["test-cases/trie/gemini-trie.yaml", "configurations/trie/nemesis.yaml", "configurations/trie/ms_sstable_format.yaml"]''',
+)

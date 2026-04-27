@@ -1,0 +1,103 @@
+test_duration: 1200
+
+# Keyspace and table used by cassandra-stress commands below (same as cassandra-stress defaults)
+perf_stress_keyspace: keyspace1
+perf_stress_table: standard1
+
+prepare_write_cmd:
+  - >-
+    latte run --function=insert --consistency=ALL --threads=7 --concurrency=21 --rate=37500
+    --duration=11500000 --start-cycle=1 --end-cycle=11500000
+    -P row_count=46000000 -P rows_per_partition=460000
+    --tag latte-prepare-01
+    data_dir/trie/large-partition.rn
+  - >-
+    latte run --function=insert --consistency=ALL --threads=7 --concurrency=21 --rate=37500
+    --duration=11500000 --start-cycle=11500001 --end-cycle=23000000
+    -P row_count=46000000 -P rows_per_partition=460000
+    --tag latte-prepare-02
+    data_dir/trie/large-partition.rn
+  - >-
+    latte run --function=insert --consistency=ALL --threads=7 --concurrency=21 --rate=37500
+    --duration=11500000 --start-cycle=23000001 --end-cycle=34500000
+    -P row_count=46000000 -P rows_per_partition=460000
+    --tag latte-prepare-03
+    data_dir/trie/large-partition.rn
+
+stress_cmd_r:
+  - >-
+    latte run --function=read --consistency=QUORUM
+    --concurrency=21 --threads=$threads $throttle
+    --duration=$duration --start-cycle=1 --end-cycle=11500000
+    -P row_count=46000000 -P rows_per_partition=460000
+    data_dir/trie/large-partition.rn
+  - >-
+    latte run --function=read --consistency=QUORUM
+    --concurrency=21 --threads=$threads $throttle
+    --duration=$duration --start-cycle=11500001 --end-cycle=23000000
+    -P row_count=46000000 -P rows_per_partition=460000
+    data_dir/trie/large-partition.rn
+  - >-
+    latte run --function=read --consistency=QUORUM
+    --concurrency=21 --threads=$threads $throttle
+    --duration=$duration --start-cycle=23000001 --end-cycle=34500000
+    -P row_count=46000000 -P rows_per_partition=460000
+    data_dir/trie/large-partition.rn
+
+
+stress_cmd_cache_warmup:
+  - >-
+    latte run --function=read --consistency=ALL
+    --concurrency=21 --threads=$threads
+    --duration=11500000 --start-cycle=1 --end-cycle=11500000
+    -P row_count=46000000 -P rows_per_partition=460000
+    data_dir/trie/large-partition.rn
+  - >-
+    latte run --function=read --consistency=ALL
+    --concurrency=21 --threads=$threads
+    --duration=11500000 --start-cycle=11500001 --end-cycle=23000000
+    -P row_count=46000000 -P rows_per_partition=460000
+    data_dir/trie/large-partition.rn
+  - >-
+    latte run --function=read --consistency=ALL
+    --concurrency=21 --threads=$threads
+    --duration=11500000 --start-cycle=23000001 --end-cycle=34500000
+    -P row_count=46000000 -P rows_per_partition=460000
+    data_dir/trie/large-partition.rn
+
+round_robin: true
+
+n_db_nodes: 3
+n_loaders: 3
+
+instance_type_db: 'i8g.2xlarge'
+instance_type_loader: 'c7i.4xlarge'
+instance_type_monitor: 't3.small'
+use_capacity_reservation: true
+nemesis_add_node_cnt: 0
+
+use_preinstalled_scylla: true
+
+user_prefix: 'trie-tests'
+argus_email_report_template: email_report_performance.yaml
+billing_project: 'Trie-based index'
+
+backtrace_decoding: true
+backtrace_stall_decoding: false
+
+use_mgmt: false
+
+use_hdrhistogram: true
+
+append_scylla_args: '--blocked-reactor-notify-ms 5 --abort-on-lsa-bad-alloc 1 --abort-on-seastar-bad-alloc --abort-on-internal-error 1 --abort-on-ebadf 1'
+append_scylla_yaml:
+  auto_snapshot: false
+
+use_placement_group: true
+use_prepared_loaders: false
+
+adaptive_timeout_store_metrics: false
+
+perf_gradual_threads: {"read": [1]}  # number of threads to use for each load type
+perf_gradual_throttle_steps: {"read": ['10000', '20000', '30000', '40000', '50000', '60000', '70000']}  # where every value is in ops
+perf_gradual_step_duration: {"read": '30m'}  # duration per step; None means until completion of the stress command
