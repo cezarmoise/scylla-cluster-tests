@@ -1,0 +1,31 @@
+keyspace: keyspace1
+
+keyspace_definition: |
+  CREATE KEYSPACE IF NOT EXISTS keyspace1
+  WITH replication = {'class': 'NetworkTopologyStrategy', 'replication_factor': 3};
+
+table: standard1
+
+table_definition: |
+  CREATE TABLE IF NOT EXISTS keyspace1.standard1 (
+    key blob PRIMARY KEY
+  ) WITH default_time_to_live = 0
+    AND compaction = {'class': 'IncrementalCompactionStrategy'}
+    AND compression = {}
+    AND speculative_retry = 'NONE';
+
+columnspec:
+  - name: key
+    size: fixed(8)   # match built-in key size
+
+insert:
+  partitions: fixed(1)
+  batchtype: UNLOGGED
+
+queries:
+  insert:
+    cql: INSERT INTO keyspace1.standard1 (key) VALUES (?);
+    fields: samerow
+  read:
+    cql: SELECT key FROM keyspace1.standard1 WHERE key = ?;
+    fields: samerow

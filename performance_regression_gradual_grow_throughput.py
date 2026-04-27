@@ -290,6 +290,8 @@ class PerformanceRegressionPredefinedStepsTest(PerformanceRegressionTest):
         stress_num = 1  # TODO: fix it to support multiple stress cmds per loader node (useful for latte)
         num_loaders = len(self.loaders.nodes)
         self.run_fstrim_on_all_db_nodes()
+        if self.params.get("pre_create_keyspace"):
+            self._pre_create_keyspace()
         # run a write workload as a preparation
         if workload.preload_data and not skip_optional_stage("perf_preload_data"):
             self.preload_data()
