@@ -44,6 +44,7 @@ from cassandra.query import SimpleStatement
 from invoke import UnexpectedExit
 from argus.common.enums import NemesisStatus
 from sdcm.nemesis.registry import NemesisRegistry
+from sdcm.rest.error_injection import ErrorInjection
 from sdcm.utils.action_logger import get_action_logger
 
 from sdcm.utils.cql_utils import cql_unquote_if_needed, cql_quote_if_needed
@@ -1103,10 +1104,13 @@ class NemesisRunner:
 
     def disrupt_destroy_data_then_repair(self):
         """repair at the beginning added to avoid c-s failure 'data wasn't validated'"""
-        self.run_repair()
         self._destroy_data_and_restart_scylla()
-        # try to save the node
-        self.run_repair()
+        error_injection_client = ErrorInjection(self.target_node)
+        error_injection_client.inject_error(error_name="gemini_bug_every_n", one_shot=False, data={"value": "1"})
+        if random.randint(1, 3) == 1:
+            self.run_repair()
+        else:
+            raise UnsupportedNemesis("Skipping just means repair didn't run")
 
     def disrupt_destroy_data_then_rebuild(self):
         if is_tablets_feature_enabled(self.target_node):
