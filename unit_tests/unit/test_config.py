@@ -18,7 +18,7 @@ from collections import namedtuple
 import pytest
 
 from sdcm import sct_config
-from sdcm.sct_config import int_or_list_or_eval
+from sdcm.sct_config import int_or_list_or_eval, str_or_list_or_eval
 from sdcm.test_config import TestConfig
 from sdcm.utils.common import get_latest_scylla_release
 
@@ -869,3 +869,46 @@ def test_int_or_list_or_eval_valid(value, expected):
 def test_int_or_list_or_eval_invalid(value, error_fragment):
     with pytest.raises(ValueError, match=error_fragment):
         int_or_list_or_eval(value)
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        # config path: YAML-native types
+        pytest.param(None, None, id="config_none"),
+        pytest.param("eu-west-1", ["eu-west-1"], id="single_str"),
+        pytest.param(["eu-west-1", "us-east-1"], ["eu-west-1", "us-east-1"], id="config_list_strs"),
+        # env path: raw strings from SCT_* environment variables
+        pytest.param("['eu-west-1', 'us-east-1']", ["eu-west-1", "us-east-1"], id="env_py_list"),
+        # a plain string with spaces is treated as a single string (not split)
+        pytest.param(
+            "modify_table and not disruptive", ["modify_table and not disruptive"], id="env_space_str_kept_as_one"
+        ),
+        # empty inputs
+        pytest.param("", [], id="env_empty_string"),
+        pytest.param([], [], id="config_empty_list"),
+        # single-element list is NOT unwrapped (unlike int/bool)
+        pytest.param(["only"], ["only"], id="config_single_element_list_kept"),
+        # JSON double-quoted list literal (ast.literal_eval handles it)
+        pytest.param('["eu-west-1", "us-east-1"]', ["eu-west-1", "us-east-1"], id="env_json_list"),
+    ],
+)
+def test_str_or_list_or_eval_valid(value, expected):
+    assert str_or_list_or_eval(value) == expected
+
+
+@pytest.mark.parametrize(
+    "value,error_fragment",
+    [
+        pytest.param(1, "isn't a string", id="non_string_input"),
+        pytest.param("['eu-west-1', 'us-east-1', 1]", "isn't a string", id="env_element_not_str"),
+        pytest.param("{'key': 'val'}", "parsed to", id="env_parses_to_dict"),
+        pytest.param("42", "parsed to", id="env_parses_to_int"),
+        # config path: direct list with non-string elements
+        pytest.param([True, "a"], "isn't a string", id="config_list_bool_element"),
+        pytest.param(["a", 1], "isn't a string", id="config_list_int_element"),
+    ],
+)
+def test_str_or_list_or_eval_invalid(value, error_fragment):
+    with pytest.raises(ValueError, match=error_fragment):
+        str_or_list_or_eval(value)

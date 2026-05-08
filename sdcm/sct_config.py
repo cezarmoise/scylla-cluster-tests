@@ -125,33 +125,42 @@ def _check_file_exists(value: str) -> None:
 
 
 def str_or_list_or_eval(value: Union[str, List[str], None]) -> List[str] | None:
-    """Convert an environment variable into a Python's list."""
+    """Convert a config value into a list of strings.
 
+    Accepts:
+    - None -> None
+    - str -> [str]  (always wrapped in a list)
+    - str containing a Python list literal of strings (e.g. "['a', 'b']") -> list[str]
+    - list[str] -> list[str]  (elements must already be strings; no coercion)
+
+    All list elements must be strings. Non-string elements raise ValueError.
+    """
     if value is None:
         return None
+
     if isinstance(value, str):
         try:
-            return ast.literal_eval(value)
-        except Exception:  # noqa: BLE001
-            pass
-        return (
-            [
-                str(value),
-            ]
-            if str(value)
-            else []
-        )
+            parsed = ast.literal_eval(value.strip())
+        except (ValueError, SyntaxError):
+            # literal_eval failed — treat the whole input as a plain string.
+            return [value] if value else []
+
+        # some values may be json encoded strings, so they pass trough
+        if isinstance(parsed, str):
+            return [parsed] if parsed else []
+
+        if not isinstance(parsed, list):
+            raise ValueError(f"{value} parsed to {parsed}, expected a list of strings")
+
+        value = parsed  # fall through to list validation below
 
     if isinstance(value, list):
-        ret_values = []
-        for val in value:
-            try:
-                ret_values += [ast.literal_eval(val)]
-            except Exception:  # noqa: BLE001
-                ret_values += [str(val)]
-        return ret_values
+        for el in value:
+            if not isinstance(el, str):
+                raise ValueError(f"List element {el} isn't a string in {value}")
+        return value
 
-    raise ValueError(f"{value!r} isn't a string or a list")
+    raise ValueError(f"{value} isn't a string or a list")
 
 
 StringOrList = Annotated[
