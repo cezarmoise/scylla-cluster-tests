@@ -49,3 +49,7 @@ use_placement_group: true
 use_prepared_loaders: false
 
 adaptive_timeout_store_metrics: false
+
+perf_gradual_threads: {"read": 620}  # number of threads to use for each load type
+perf_gradual_throttle_steps: {"read": ['15000', '45000', '70000', 'unthrottled']}  # where every value is in ops
+perf_gradual_step_duration: {"read": '30m'}  # duration per step; None means until completion of the stress command

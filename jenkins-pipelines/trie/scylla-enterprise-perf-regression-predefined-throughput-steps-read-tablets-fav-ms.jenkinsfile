@@ -9,6 +9,6 @@ perfRegressionParallelPipeline(
     provision_type: 'on_demand',
     billing_project: 'Trie-based index',
     test_name: "performance_regression_gradual_grow_throughput.PerformanceRegressionPredefinedStepsTest",
-    test_config: '''["test-cases/performance/perf-regression-predefined-throughput-steps-trie-fav.yaml", "configurations/trie/cassandra_stress_gradual_load_steps.yaml", "configurations/disable_kms.yaml", "configurations/performance/latency-decorator-error-thresholds-steps-ent-tablets.yaml", "configurations/trie/ms_sstable_format.yaml"]''',
+    test_config: '''["test-cases/performance/perf-regression-predefined-throughput-steps-trie-fav.yaml", "configurations/disable_kms.yaml", "configurations/performance/latency-decorator-error-thresholds-steps-ent-tablets.yaml", "configurations/trie/ms_sstable_format.yaml"]''',
     sub_tests: ["test_read_gradual_increase_load"],
 )

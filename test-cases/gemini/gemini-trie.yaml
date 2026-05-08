@@ -1,4 +1,4 @@
-test_duration: 800
+test_duration: 1600
 n_db_nodes: 6
 n_test_oracle_db_nodes: 1
 n_loaders: 1
@@ -8,11 +8,11 @@ instance_type_loader: 'm7i.2xlarge'
 
 user_prefix: 'trie-tests'
 
-nemesis_seed: 40
+nemesis_seed: 42
 gemini_seed: 40
 
 gemini_cmd: |
-  --duration 2h
+  --duration 24h
   --warmup 10m
   --concurrency 200
   --mode mixed

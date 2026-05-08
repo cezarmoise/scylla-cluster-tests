@@ -1,0 +1,72 @@
+use latte::*;
+
+const ROW_COUNT = latte::param!("row_count", 300000);
+const ROWS_PER_PARTITION = latte::param!("rows_per_partition", 150000);
+const PARTITION_SIZES = latte::param!("partition_sizes", "100:1");
+const RANGE_QUERY_OFFSET = latte::param!("range_query_offset", 1000);
+
+const CK_SIZE = 2048;
+const VALUE_COLUMN_SIZE = 1024;
+
+const P_WRITE = "latte_prep_stmt__write";
+const P_READ = "latte_prep_stmt__read";
+
+const KEYSPACE = "latte";
+const TABLE = "trie_index";
+const REPLICATION_FACTOR = latte::param!("replication_factor", 3);
+
+pub async fn schema(db) {
+    db.execute(`CREATE KEYSPACE IF NOT EXISTS ${KEYSPACE} WITH REPLICATION = {
+        'class': 'NetworkTopologyStrategy', 'replication_factor': ${REPLICATION_FACTOR} }`).await?;
+
+    db.execute(`CREATE TABLE IF NOT EXISTS ${KEYSPACE}.${TABLE}(
+        pk bigint,
+        ck blob,
+        value blob,
+        PRIMARY KEY (pk, ck)
+    ) WITH CLUSTERING ORDER BY (ck ASC) AND speculative_retry = 'NONE'`).await?;
+}
+
+pub async fn erase(db) {
+    db.execute(`TRUNCATE TABLE ${KEYSPACE}.${TABLE}`).await?
+}
+
+pub async fn prepare(db) {
+    db.init_partition_row_distribution_preset(
+        "load", ROW_COUNT, ROWS_PER_PARTITION, PARTITION_SIZES,
+    ).await?;
+
+    db.prepare(P_WRITE, `INSERT INTO ${KEYSPACE}.${TABLE} (pk, ck, value) VALUES (:pk, :ck, :value)`).await?;
+    db.prepare(P_READ,  `SELECT pk, ck FROM ${KEYSPACE}.${TABLE} WHERE pk = :pk AND ck = :ck_start`).await?;
+}
+
+pub async fn insert(db, i) {
+    let idx = i % ROW_COUNT;
+    let partition_idx = db.get_partition_idx("load", idx).await;
+    let pk = hash(partition_idx);
+    let ck = generate_large_ck(i);
+    let value = blob(i, VALUE_COLUMN_SIZE);
+
+    db.execute_prepared(P_WRITE, [pk, ck, value]).await?
+}
+
+pub async fn read(db, i) {
+    let idx = i % ROW_COUNT;
+    let partition_idx = db.get_partition_idx("load", idx).await;
+    let pk = hash(partition_idx);
+    let ck_start = generate_large_ck(i);
+    let ck_end = generate_large_ck(i + RANGE_QUERY_OFFSET);
+
+    db.execute_prepared(P_READ, [pk, ck_start, ck_end]).await?;
+}
+
+fn generate_large_ck(i) {
+    let ck = blob(0, CK_SIZE);
+
+    for pos in 0..8 {
+        let shift = 7 - pos;
+        ck.push(((i >> (shift * 8)) & 0xFF) as u8);
+    }
+
+    ck
+}
