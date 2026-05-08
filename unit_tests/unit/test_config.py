@@ -18,6 +18,7 @@ from collections import namedtuple
 import pytest
 
 from sdcm import sct_config
+from sdcm.sct_config import int_or_list_or_eval
 from sdcm.test_config import TestConfig
 from sdcm.utils.common import get_latest_scylla_release
 
@@ -239,8 +240,8 @@ def test_14_check_rackaware_config_no_rack_without_loader(monkeypatch):
     monkeypatch.setenv("SCT_REGION_NAME", "eu-west-1 eu-west-2")
     monkeypatch.setenv("SCT_AVAILABILITY_ZONE", "a,b")
     monkeypatch.setenv("SCT_SIMULATED_RACKS", "0")
-    monkeypatch.setenv("SCT_N_DB_NODES", "2 2")
-    monkeypatch.setenv("SCT_N_LOADERS", "2 2")
+    monkeypatch.setenv("SCT_N_DB_NODES", "[2, 2]")
+    monkeypatch.setenv("SCT_N_LOADERS", "[2, 2]")
     monkeypatch.setenv("SCT_INSTANCE_TYPE_DB", "i4i.large")
     monkeypatch.setenv("SCT_AMI_ID_DB_SCYLLA", "ami-dummy ami-dummy2")
     monkeypatch.setenv("SCT_AMI_ID_LOADER", "ami-loader1 ami-loader2")
@@ -282,8 +283,8 @@ def test_14_check_rackaware_config_multi_region(monkeypatch):
     monkeypatch.setenv("SCT_CLUSTER_BACKEND", "aws")
     monkeypatch.setenv("SCT_RACK_AWARE_LOADER", "true")
     monkeypatch.setenv("SCT_REGION_NAME", '["eu-west-1", "us-east-1"]')
-    monkeypatch.setenv("SCT_N_DB_NODES", "2 2")
-    monkeypatch.setenv("SCT_N_LOADERS", "1 0")
+    monkeypatch.setenv("SCT_N_DB_NODES", "[2, 2]")
+    monkeypatch.setenv("SCT_N_LOADERS", "[1, 0]")
     monkeypatch.setenv("SCT_INSTANCE_TYPE_DB", "i4i.large")
     monkeypatch.setenv("SCT_AMI_ID_DB_SCYLLA", "ami-dummy ami-dummy2")
     monkeypatch.setenv("SCT_AMI_ID_LOADER", "ami-loader1 ami-loader2")
@@ -304,8 +305,8 @@ def test_14_check_rackaware_config_multi_az_and_region(monkeypatch):
     monkeypatch.setenv("SCT_RACK_AWARE_LOADER", "true")
     monkeypatch.setenv("SCT_REGION_NAME", '["eu-west-1", "us-east-1"]')
     monkeypatch.setenv("SCT_AVAILABILITY_ZONE", "a,b")
-    monkeypatch.setenv("SCT_N_DB_NODES", "2 2")
-    monkeypatch.setenv("SCT_N_LOADERS", "1 1")
+    monkeypatch.setenv("SCT_N_DB_NODES", "[2, 2]")
+    monkeypatch.setenv("SCT_N_LOADERS", "[1, 1]")
     monkeypatch.setenv("SCT_INSTANCE_TYPE_DB", "i4i.large")
     monkeypatch.setenv("SCT_AMI_ID_DB_SCYLLA", "ami-dummy ami-dummy2")
     monkeypatch.setenv("SCT_AMI_ID_LOADER", "ami-loader1 ami-loader2")
@@ -553,7 +554,7 @@ def test_27_run_fullscan_params_validtion_negative(monkeypatch):
 
 
 def test_28_number_of_nodes_per_az_must_be_divisable_by_number_of_az(monkeypatch):
-    monkeypatch.setenv("SCT_N_DB_NODES", "3 3 2")
+    monkeypatch.setenv("SCT_N_DB_NODES", "[3, 3, 2]")
     monkeypatch.setenv("SCT_REGION_NAME", "eu-west-1 eu-west-2 us-east-1")
     monkeypatch.setenv("SCT_AVAILABILITY_ZONE", "a,b,c")
     monkeypatch.setenv("SCT_CLUSTER_BACKEND", "aws")
@@ -808,3 +809,63 @@ def test_migrator_source_hosts_and_test_id_mutually_exclusive(monkeypatch):
     conf = sct_config.SCTConfiguration()
     with pytest.raises(ValueError, match="mutually exclusive"):
         conf.verify_configuration()
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        # config path: YAML-native types
+        pytest.param(None, None, id="config_none"),
+        pytest.param(3, 3, id="config_int"),
+        pytest.param(0, 0, id="config_zero"),
+        pytest.param([3, 1], [3, 1], id="config_list_ints"),
+        pytest.param([253, 328], [253, 328], id="config_list_ints_long"),
+        # env path: raw strings from SCT_* environment variables
+        pytest.param("3", 3, id="env_single_int"),
+        pytest.param("0", 0, id="env_zero"),
+        pytest.param("[3, 1]", [3, 1], id="env_list_literal"),
+        pytest.param("[3,1]", [3, 1], id="env_list_literal_no_spaces"),
+        pytest.param("[3, 3, 2]", [3, 3, 2], id="env_list_literal_three"),
+        pytest.param("[1, 0]", [1, 0], id="env_list_literal_with_zero"),
+        # negative integers
+        pytest.param(-5, -5, id="config_negative_int"),
+        pytest.param("-5", -5, id="env_negative_int"),
+        pytest.param([-5, -3], [-5, -3], id="config_negative_list"),
+        pytest.param("[-5, -3]", [-5, -3], id="env_negative_list"),
+        # empty list
+        pytest.param([], [], id="config_empty_list"),
+        pytest.param("[]", [], id="env_empty_list"),
+    ],
+)
+def test_int_or_list_or_eval_valid(value, expected):
+    assert int_or_list_or_eval(value) == expected
+
+
+@pytest.mark.parametrize(
+    "value,error_fragment",
+    [
+        # space-separated strings are no longer accepted; literal_eval fails then int() fails
+        pytest.param("3 1", "isn't a valid int or list", id="env_space_sep_two"),
+        pytest.param("3 3 3", "isn't a valid int or list", id="env_space_sep_three"),
+        pytest.param("  5 10  ", "isn't a valid int or list", id="env_space_sep_padded"),
+        # non-numeric strings
+        pytest.param("foo", "isn't a valid int or list", id="env_non_numeric"),
+        # invalid list element types
+        pytest.param(["a", "b"], "isn't an integer", id="config_list_str_elements"),
+        pytest.param(["3", "1"], "isn't an integer", id="config_list_quoted_ints_rejected"),
+        # leading 0
+        pytest.param("033", "isn't a valid int or list", id="env_leading_zero"),
+        # wrong scalar type
+        pytest.param(3.14, "isn't a valid int or list", id="config_float"),
+        pytest.param(False, "isn't a valid int or list", id="config_bool"),
+        # bool True is also rejected (symmetry with False)
+        pytest.param(True, "isn't a valid int or list", id="config_bool_true"),
+        # list element that is a bool (bool subclasses int but must be excluded)
+        pytest.param([True, 1], "isn't an integer", id="config_list_bool_element"),
+        # empty string
+        pytest.param("", "isn't a valid int or list", id="env_empty_string"),
+    ],
+)
+def test_int_or_list_or_eval_invalid(value, error_fragment):
+    with pytest.raises(ValueError, match=error_fragment):
+        int_or_list_or_eval(value)

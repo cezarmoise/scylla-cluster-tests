@@ -151,7 +151,7 @@ def str_or_list_or_eval(value: Union[str, List[str], None]) -> List[str] | None:
                 ret_values += [str(val)]
         return ret_values
 
-    raise ValueError(f"{value} isn't a string or a list")
+    raise ValueError(f"{value!r} isn't a string or a list")
 
 
 StringOrList = Annotated[
@@ -159,33 +159,49 @@ StringOrList = Annotated[
 ]
 
 
-def int_or_space_separated_ints(value: str | int | list[int]) -> int | list[int]:
+def int_or_list_or_eval(value: str | int | list[int]) -> int | list[int] | None:
+    """Coerce value to a single int or a list of ints.
+
+    Accepts:
+    - None -> None
+    - int -> int
+    - list[int] -> int (single element unwrapped) or list[int] (multiple elements)
+    - str containing a single integer (e.g. from an env var) -> int
+    - str containing a Python list literal of ints (e.g. "[2, 2]" from an env var) -> list[int]
+
+    List elements must already be ints; string elements (e.g. ["3", "1"]) are rejected.
+    Space-separated strings (e.g. '3 3') are no longer accepted.
+    Use a YAML list instead: [3, 3].
+    """
     if value is None:
         return None
-    try:
-        value = int(value)
+
+    # bool is a subclass of int in Python, so we need to exclude bools explicitly to avoid accepting True/False as valid ints.
+    if isinstance(value, int) and not isinstance(value, bool):
         return value
-    except Exception:  # noqa: BLE001
-        pass
 
     if isinstance(value, list):
-        # Handle list of ints or list of strings that can be converted to ints
-        try:
-            return [int(v) for v in value]
-        except (ValueError, TypeError) as exc:
-            raise ValueError(f"{value} isn't a list of integers") from exc
+        for v in value:
+            if not isinstance(v, int) or isinstance(v, bool):
+                raise ValueError(f"List element {v} isn't an integer in {value}")
+        return value
 
     if isinstance(value, str):
+        # Try literal_eval first — handles "[2, 2]", "[3]", "3", etc.
         try:
-            values = value.split()
-            return [int(v) for v in values]
-        except Exception:  # noqa: BLE001
+            parsed = ast.literal_eval(value.strip())
+        except (ValueError, SyntaxError):
             pass
+        else:
+            if isinstance(parsed, list):
+                return int_or_list_or_eval(parsed)  # recursively validate list elements
+            if isinstance(parsed, int) and not isinstance(parsed, bool):
+                return parsed
 
-    raise ValueError("{} isn't int or list".format(value))
+    raise ValueError(f"{value} (type {type(value).__name__}) isn't a valid int or list[int]")
 
 
-IntOrList = Annotated[int | list[int], BeforeValidator(int_or_space_separated_ints)]
+IntOrList = Annotated[int | list[int], BeforeValidator(int_or_list_or_eval)]
 
 
 def boolean_or_space_separated_booleans(value: bool | list[bool] | str | None) -> bool | list[bool] | None:  # noqa: PLR0911
@@ -1237,7 +1253,7 @@ class SCTConfiguration(BaseModel):
         description="If True, enable support in SCT of zero nodes (configuration, nemesis)",
     )
     n_db_zero_token_nodes: IntOrList = SctField(
-        description="Number of zero token nodes in cluster. Value should be set as '0 1 1' "
+        description="Number of zero token nodes in cluster. Value should be set as [0, 1, 1] "
         "for multidc configuration in same manner as 'n_db_nodes' and should be equal number of regions",
     )
     zero_token_instance_type_db: String = SctField(
@@ -3069,22 +3085,10 @@ class SCTConfiguration(BaseModel):
     def total_db_nodes(self) -> List[int]:
         """Used to get total number of db nodes data nodes and zero nodes"""
         use_zero_nodes = self.get("use_zero_nodes")
-        zero_nodes_num = self.get("n_db_zero_token_nodes")
-        data_nodes_num = self.get("n_db_nodes")
-        zero_nodes_num = (
-            zero_nodes_num
-            if isinstance(zero_nodes_num, list)
-            else [zero_nodes_num]
-            if isinstance(zero_nodes_num, int)
-            else [int(i) for i in str(zero_nodes_num).split()]
-        )
-        data_nodes_num = (
-            data_nodes_num
-            if isinstance(data_nodes_num, list)
-            else [data_nodes_num]
-            if isinstance(data_nodes_num, int)
-            else [int(i) for i in str(data_nodes_num).split()]
-        )
+        zero_nodes_num: list[int] | int = self.get("n_db_zero_token_nodes")
+        data_nodes_num: list[int] | int = self.get("n_db_nodes")
+        zero_nodes_num = zero_nodes_num if isinstance(zero_nodes_num, list) else [zero_nodes_num]
+        data_nodes_num = data_nodes_num if isinstance(data_nodes_num, list) else [data_nodes_num]
         total_nodes = data_nodes_num[:]
         if use_zero_nodes and zero_nodes_num:
             total_nodes = [n1 + n2 for n1, n2 in zip(data_nodes_num, zero_nodes_num)]
@@ -3628,8 +3632,6 @@ class SCTConfiguration(BaseModel):
         if seeds is not None:
             if isinstance(seeds, int):
                 seeds_list = [seeds]
-            elif isinstance(seeds, str):
-                seeds_list = seeds.split()
             else:
                 seeds_list = seeds
             if len(seeds_list) > 1 and len(seeds_list) != num_threads:
