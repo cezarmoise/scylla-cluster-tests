@@ -98,8 +98,8 @@ Accepts boolean or list of booleans, with string conversion:
 # Single boolean
 nemesis_during_prepare: true
 
-# Space-separated string
-nemesis_during_prepare: "true false"  # → [true, false]
+# List of booleans (for multi-DC)
+nemesis_during_prepare: [true, false]
 
 # String values (yes/no/1/0)
 nemesis_during_prepare: "yes"  # → true

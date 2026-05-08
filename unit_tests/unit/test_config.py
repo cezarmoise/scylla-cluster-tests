@@ -18,7 +18,7 @@ from collections import namedtuple
 import pytest
 
 from sdcm import sct_config
-from sdcm.sct_config import int_or_list_or_eval, str_or_list_or_eval
+from sdcm.sct_config import bool_or_list_or_eval, int_or_list_or_eval, str_or_list_or_eval
 from sdcm.test_config import TestConfig
 from sdcm.utils.common import get_latest_scylla_release
 
@@ -912,3 +912,66 @@ def test_str_or_list_or_eval_valid(value, expected):
 def test_str_or_list_or_eval_invalid(value, error_fragment):
     with pytest.raises(ValueError, match=error_fragment):
         str_or_list_or_eval(value)
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [
+        # config path: YAML-native types
+        pytest.param(None, None, id="config_none"),
+        pytest.param(True, True, id="config_true"),
+        pytest.param(False, False, id="config_false"),
+        pytest.param([True, False], [True, False], id="config_list_bools"),
+        pytest.param([True], True, id="config_single_item_list_unwrapped"),
+        pytest.param([False], False, id="config_single_false_unwrapped"),
+        pytest.param(["true", "false"], [True, False], id="config_list_str_bools"),  # YAML quoted
+        pytest.param([True, "0"], [True, False], id="config_mixed_list"),
+        # env path: raw strings from SCT_* environment variables
+        pytest.param("true", True, id="env_true"),
+        pytest.param("false", False, id="env_false"),
+        pytest.param("1", True, id="env_one"),
+        pytest.param("0", False, id="env_zero"),
+        pytest.param("yes", True, id="env_yes"),
+        pytest.param("no", False, id="env_no"),
+        pytest.param("[true, false]", [True, False], id="env_list_literal_lower"),
+        pytest.param("[True, False]", [True, False], id="env_list_literal_python"),
+        pytest.param("[true]", True, id="env_list_literal_single_unwrapped"),
+        # Python-capitalized strings (ast.literal_eval path)
+        pytest.param("True", True, id="env_capitalized_true"),
+        pytest.param("False", False, id="env_capitalized_false"),
+        # strtobool aliases
+        pytest.param("on", True, id="env_on"),
+        pytest.param("off", False, id="env_off"),
+        pytest.param("ON", True, id="env_on_upper"),
+        pytest.param("YES", True, id="env_yes_upper"),
+        pytest.param("NO", False, id="env_no_upper"),
+    ],
+)
+def test_bool_or_list_or_eval_valid(value, expected):
+    assert bool_or_list_or_eval(value) == expected
+
+
+@pytest.mark.parametrize(
+    "value,error_fragment",
+    [
+        # space-separated strings are no longer accepted; strtobool fails on them
+        pytest.param("true false", "cannot be converted to bool", id="env_space_sep_bools"),
+        pytest.param("1 0", "cannot be converted to bool", id="env_space_sep_int_bools"),
+        pytest.param("  true false  ", "cannot be converted to bool", id="env_space_sep_padded"),
+        # unrecognized boolean string
+        pytest.param("maybe", "cannot be converted", id="env_non_bool_string"),
+        # list with unrecognized element
+        pytest.param(["yes", "maybe"], "isn't a list of booleans", id="config_list_invalid_element"),
+        # list with mixed types (both python and yaml style bools)
+        pytest.param("[True, false]", "cannot be converted to bool", id="env_list_literal_mixed_types"),
+        # int does not pass trough
+        pytest.param(1, "isn't a valid bool or list", id="config_int"),
+        # empty string is unrecognized by strtobool
+        pytest.param("", "cannot be converted to bool", id="env_empty_string"),
+        # list containing None cannot be coerced
+        pytest.param([True, None], "isn't a list of booleans", id="config_list_with_none"),
+    ],
+)
+def test_bool_or_list_or_eval_invalid(value, error_fragment):
+    with pytest.raises(ValueError, match=error_fragment):
+        bool_or_list_or_eval(value)
