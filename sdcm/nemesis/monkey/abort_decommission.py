@@ -1,12 +1,15 @@
+from contextlib import ExitStack
+
 from invoke import UnexpectedExit
 
 from sdcm.cluster import NodeCleanedAfterDecommissionAborted, NodeStayInClusterAfterDecommission
-from sdcm.exceptions import UnsupportedNemesis
+from sdcm.exceptions import KillNemesis, UnsupportedNemesis
 from sdcm.nemesis import NemesisBaseClass, target_data_nodes
 from sdcm.remote.libssh2_client.exceptions import UnexpectedExit as Libssh2UnexpectedExit
 from sdcm.sct_events import Severity
 from sdcm.sct_events.database import DatabaseLogEvent
 from sdcm.sct_events.filters import EventsSeverityChangerFilter
+from sdcm.utils.features import is_tablets_feature_enabled
 from sdcm.utils.tasks import wait_for_tasks
 from sdcm.utils.parallel_object import ParallelObject
 from sdcm.wait import wait_for
@@ -66,40 +69,7 @@ class AbortDecommissionMonkey(NemesisBaseClass):
         # This will wait until either abort finishes, or, if abort fails, until decommission finishes
         self.runner.target_node.run_nodetool(f"tasks wait {task_id}")
 
-    def disrupt(self):
-        """
-        Start decommission on target node and abort it after streaming starts.
-
-        Outcome is determined by cluster.verify_decommission() which inspects
-        gossip and Raft group0:
-
-        - NodeStayInClusterAfterDecommission: abort worked, node is still in
-          the token ring (possibly in a transient UJ/DN state).  Wait up to
-          _RECOVERY_TIMEOUT_S seconds for the node to return to UN and exit
-          without adding a replacement.
-
-        - NodeCleanedAfterDecommissionAborted: decommission was partially
-          completed — the node was removed from the token ring but left a
-          group0 entry.  verify_decommission already terminated the node and
-          cleaned Raft group0.  Add a replacement node.
-
-        - Returns normally: full decommission succeeded despite the abort.
-          verify_decommission already terminated the node.  Add a replacement.
-        """
-        if len([n for n in self.runner.cluster.data_nodes if n.rack == self.runner.target_node.rack]) == 1:
-            raise UnsupportedNemesis(
-                f"Target node {self.runner.target_node.name} is the only one in rack {self.runner.target_node.rack}, cannot decommission it."
-            )
-
-        # save info of the target node, as it will not be available if decommission succeeds
-        target_is_seed = self.runner.target_node.is_seed
-        target_name = self.runner.target_node.name
-
-        # Run decommission and abort in parallel, since we want to abort as soon as streaming starts, without waiting for decommission to finish
-        ParallelObject(
-            objects=[self.decommission_target_node, self.abort_decommission_task], timeout=600
-        ).call_objects()
-
+    def verify(self, target_is_seed: bool, target_name: str):
         # verify_decommission checks gossip + Raft to determine the actual outcome.
         # It also calls terminate_node() internally when the node has left the ring,
         # which removes the node from cluster.nodes and prevents ghost-node pollution.
@@ -138,3 +108,50 @@ class AbortDecommissionMonkey(NemesisBaseClass):
             self.runner.cluster.update_seed_provider()
         self.runner.log.info("Added new node %s to replace decommissioned node %s", new_node.name, target_name)
         self.runner.monitoring_set.reconfigure_scylla_monitoring()
+
+    def disrupt(self):
+        """
+        Start decommission on target node and abort it after streaming starts.
+
+        Outcome is determined by cluster.verify_decommission() which inspects
+        gossip and Raft group0:
+
+        - NodeStayInClusterAfterDecommission: abort worked, node is still in
+          the token ring (possibly in a transient UJ/DN state).  Wait up to
+          _RECOVERY_TIMEOUT_S seconds for the node to return to UN and exit
+          without adding a replacement.
+
+        - NodeCleanedAfterDecommissionAborted: decommission was partially
+          completed — the node was removed from the token ring but left a
+          group0 entry.  verify_decommission already terminated the node and
+          cleaned Raft group0.  Add a replacement node.
+
+        - Returns normally: full decommission succeeded despite the abort.
+          verify_decommission already terminated the node.  Add a replacement.
+        """
+        if len([n for n in self.runner.cluster.data_nodes if n.rack == self.runner.target_node.rack]) == 1:
+            raise UnsupportedNemesis(
+                f"Target node {self.runner.target_node.name} is the only one in rack {self.runner.target_node.rack}, cannot decommission it."
+            )
+
+        if not is_tablets_feature_enabled(self.runner.target_node):
+            raise UnsupportedNemesis("Aborting decommission is only supported with tablets.")
+
+        if not self.runner.cluster.get_non_system_ks_cf_with_tablets_list():
+            raise UnsupportedNemesis("No test tables with tablets found.")
+
+        with ExitStack() as context_manager:
+
+            def finalizer(exc_type, *_):
+                # in case of test end/killed, leave the cleanup alone
+                if exc_type is not KillNemesis:
+                    self.verify(
+                        target_is_seed=self.runner.target_node.is_seed, target_name=self.runner.target_node.name
+                    )
+
+            context_manager.push(finalizer)
+
+            # Run decommission and abort in parallel, since we want to abort as soon as streaming starts, without waiting for decommission to finish
+            ParallelObject(
+                objects=[self.decommission_target_node, self.abort_decommission_task], timeout=600
+            ).call_objects()
