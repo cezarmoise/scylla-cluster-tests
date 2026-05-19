@@ -9,7 +9,6 @@ from sdcm.remote.libssh2_client.exceptions import UnexpectedExit as Libssh2Unexp
 from sdcm.sct_events import Severity
 from sdcm.sct_events.database import DatabaseLogEvent
 from sdcm.sct_events.filters import EventsSeverityChangerFilter
-from sdcm.utils.features import is_tablets_feature_enabled
 from sdcm.utils.tasks import wait_for_tasks
 from sdcm.utils.parallel_object import ParallelObject
 from sdcm.wait import wait_for
@@ -56,7 +55,10 @@ class AbortDecommissionMonkey(NemesisBaseClass):
         # indicating that SSTable streaming has finished for at least one sstable.
         # Once the `log_follower` yields a line, we know streaming has started.
         log_follower = self.runner.target_node.follow_system_log(
-            patterns=[r"stream_blob - stream_sstables\[[0-9a-f-]+\] Finished sending"]
+            patterns=[
+                r"stream_blob - stream_sstables\[[0-9a-f-]+\] Finished sending",
+                r"range_streamer - Finished [0-9]+ out of [0-9]+ ranges for decommission",
+            ]
         )
 
         _streaming_started = lambda: len(list(log_follower)) > 0
@@ -134,11 +136,11 @@ class AbortDecommissionMonkey(NemesisBaseClass):
                 f"Target node {self.runner.target_node.name} is the only one in rack {self.runner.target_node.rack}, cannot decommission it."
             )
 
-        if not is_tablets_feature_enabled(self.runner.target_node):
-            raise UnsupportedNemesis("Aborting decommission is only supported with tablets.")
+        # if not is_tablets_feature_enabled(self.runner.target_node):
+        #     raise UnsupportedNemesis("Aborting decommission is only supported with tablets.")
 
-        if not self.runner.cluster.get_non_system_ks_cf_with_tablets_list():
-            raise UnsupportedNemesis("No test tables with tablets found.")
+        # if not self.runner.cluster.get_non_system_ks_cf_with_tablets_list():
+        #     raise UnsupportedNemesis("No test tables with tablets found.")
 
         with ExitStack() as context_manager:
 
