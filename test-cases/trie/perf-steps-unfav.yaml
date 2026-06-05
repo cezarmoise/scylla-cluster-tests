@@ -27,19 +27,19 @@ prepare_write_cmd:
 stress_cmd_r:
   - >-
     latte run --function=read --consistency=QUORUM
-    --concurrency=21 --threads=$threads $throttle
+    --concurrency=$concurrency --threads=$threads $throttle
     --duration=$duration --start-cycle=1 --end-cycle=11500000
     -P row_count=46000000 -P rows_per_partition=46000
     data_dir/trie/unfavorable.rn
   - >-
     latte run --function=read --consistency=QUORUM
-    --concurrency=21 --threads=$threads $throttle
+    --concurrency=$concurrency --threads=$threads $throttle
     --duration=$duration --start-cycle=11500001 --end-cycle=23000000
     -P row_count=46000000 -P rows_per_partition=46000
     data_dir/trie/unfavorable.rn
   - >-
     latte run --function=read --consistency=QUORUM
-    --concurrency=21 --threads=$threads $throttle
+    --concurrency=$concurrency --threads=$threads $throttle
     --duration=$duration --start-cycle=23000001 --end-cycle=34500000
     -P row_count=46000000 -P rows_per_partition=46000
     data_dir/trie/unfavorable.rn
@@ -48,19 +48,19 @@ stress_cmd_r:
 stress_cmd_cache_warmup:
   - >-
     latte run --function=read --consistency=ALL
-    --concurrency=21 --threads=$threads
+    --concurrency=21 --threads=7
     --duration=11500000 --start-cycle=1 --end-cycle=11500000
     -P row_count=46000000 -P rows_per_partition=46000
     data_dir/trie/unfavorable.rn
   - >-
     latte run --function=read --consistency=ALL
-    --concurrency=21 --threads=$threads
+    --concurrency=21 --threads=7
     --duration=11500000 --start-cycle=11500001 --end-cycle=23000000
     -P row_count=46000000 -P rows_per_partition=46000
     data_dir/trie/unfavorable.rn
   - >-
     latte run --function=read --consistency=ALL
-    --concurrency=21 --threads=$threads
+    --concurrency=21 --threads=7
     --duration=11500000 --start-cycle=23000001 --end-cycle=34500000
     -P row_count=46000000 -P rows_per_partition=46000
     data_dir/trie/unfavorable.rn
@@ -98,6 +98,16 @@ use_prepared_loaders: false
 
 adaptive_timeout_store_metrics: false
 
-perf_gradual_threads: {"read": [1]}  # number of threads to use for each load type
-perf_gradual_throttle_steps: {"read": ['10000', '20000', '30000', '40000', '50000', '60000', '70000']}  # where every value is in ops
+# perf_gradual_threads: {"read": [1]}  # number of threads to use for each load type
+# perf_gradual_throttle_steps: {"read": ['10000', '20000', '30000', '40000', '50000', '60000', '70000']}  # where every value is in ops
+perf_gradual_throttle_steps:
+  read:
+  - {'threads': 1, 'concurrency': 21, 'rate': '10000'}
+  - {'threads': 1, 'concurrency': 42, 'rate': '20000'}
+  - {'threads': 1, 'concurrency': 63, 'rate': '30000'}
+  - {'threads': 1, 'concurrency': 84, 'rate': '40000'}
+  - {'threads': 1, 'concurrency': 105, 'rate': '50000'}
+  - {'threads': 1, 'concurrency': 126, 'rate': '60000'}
+  - {'threads': 1, 'concurrency': 147, 'rate': '70000'}
+  - {'threads': 1, 'concurrency': 168, 'rate': '80000'}
 perf_gradual_step_duration: {"read": '30m'}  # duration per step; None means until completion of the stress command
