@@ -19,10 +19,10 @@ stress_cmd_r: [
 ]
 
 stress_cmd_cache_warmup: [
-  "cassandra-stress user profile=/tmp/favorable-trie-index-profile.yaml 'ops(read=1)' cl=ALL duration=160000000 -mode connectionsPerHost=8 cql3 native -rate 'threads=620' -col 'size=FIXED(1024) n=FIXED(1)' -pop   'dist=seq(        1..160000001)'",
-  "cassandra-stress user profile=/tmp/favorable-trie-index-profile.yaml 'ops(read=1)' cl=ALL duration=160000000 -mode connectionsPerHost=8 cql3 native -rate 'threads=620' -col 'size=FIXED(1024) n=FIXED(1)' -pop   'dist=seq(160000002..320000002)'",
-  "cassandra-stress user profile=/tmp/favorable-trie-index-profile.yaml 'ops(read=1)' cl=ALL duration=160000000 -mode connectionsPerHost=8 cql3 native -rate 'threads=620' -col 'size=FIXED(1024) n=FIXED(1)' -pop 'dist=gauss(320000003..480000003,400000000,24000000)'",
-  "cassandra-stress user profile=/tmp/favorable-trie-index-profile.yaml 'ops(read=1)' cl=ALL duration=160000000 -mode connectionsPerHost=8 cql3 native -rate 'threads=620' -col 'size=FIXED(1024) n=FIXED(1)' -pop 'dist=gauss(480000004..640000004,560000000,24000000)'"
+  "cassandra-stress user profile=/tmp/favorable-trie-index-profile.yaml 'ops(read=1)' cl=ALL n=160000000 -mode connectionsPerHost=8 cql3 native -rate 'threads=620' -col 'size=FIXED(1024) n=FIXED(1)' -pop   'dist=seq(        1..160000001)'",
+  "cassandra-stress user profile=/tmp/favorable-trie-index-profile.yaml 'ops(read=1)' cl=ALL n=160000000 -mode connectionsPerHost=8 cql3 native -rate 'threads=620' -col 'size=FIXED(1024) n=FIXED(1)' -pop   'dist=seq(160000002..320000002)'",
+  "cassandra-stress user profile=/tmp/favorable-trie-index-profile.yaml 'ops(read=1)' cl=ALL n=160000000 -mode connectionsPerHost=8 cql3 native -rate 'threads=620' -col 'size=FIXED(1024) n=FIXED(1)' -pop 'dist=gauss(320000003..480000003,400000000,24000000)'",
+  "cassandra-stress user profile=/tmp/favorable-trie-index-profile.yaml 'ops(read=1)' cl=ALL n=160000000 -mode connectionsPerHost=8 cql3 native -rate 'threads=620' -col 'size=FIXED(1024) n=FIXED(1)' -pop 'dist=gauss(480000004..640000004,560000000,24000000)'"
 ]
 
 round_robin: true
