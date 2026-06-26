@@ -27,6 +27,8 @@ from sdcm.provision.helpers.certificate import CA_CERT_FILE, CA_KEY_FILE, create
 from sdcm.sct_events.system import SpotTerminationEvent
 from sdcm.sct_provision import region_definition_builder
 from sdcm.sct_provision.instances_provider import provision_instances_with_fallback
+from sdcm.keystore import KeyStore
+from sdcm.remote.base import shell_script_cmd
 from sdcm.utils.decorators import retrying
 from sdcm.utils.net import resolve_ip_to_dns
 from sdcm.utils.oci_utils import get_oci_compartment_id
@@ -187,6 +189,30 @@ class OciNode(cluster.BaseNode):
             self.log.warning("Error during getting OCI spot termination notification: %s", details)
 
         return SPOT_TERMINATION_CHECK_DELAY
+
+    def fix_scylla_server_systemd_config(self):
+        super().fix_scylla_server_systemd_config()
+        if self.is_docker():
+            return
+        # OCI S3-compatible object storage authenticates via AWS-style credentials.
+        # Override whatever AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY are in the
+        # environment (SCT runner credentials) with the OCI backup credentials so
+        # Scylla talks to the right endpoint.
+        oci_creds = KeyStore().get_backup_oci_credentials()
+        access_key = oci_creds["access_key_id"]
+        secret_key = oci_creds["secret_access_key"]
+        self.log.debug("Setting OCI S3 credentials in scylla-server systemd unit")
+        self.remoter.sudo(
+            shell_script_cmd(f"""\
+            mkdir -p /etc/systemd/system/scylla-server.service.d
+            cat <<'EOF' > /etc/systemd/system/scylla-server.service.d/oci-s3-creds.conf
+            [Service]
+            Environment=AWS_ACCESS_KEY_ID={access_key}
+            Environment=AWS_SECRET_ACCESS_KEY={secret_key}
+            EOF
+            systemctl daemon-reload
+        """)
+        )
 
     def restart(self):
         self._instance.reboot(wait=True, hard=False)
