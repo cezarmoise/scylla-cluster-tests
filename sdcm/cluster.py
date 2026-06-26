@@ -2569,10 +2569,28 @@ class BaseNode(AutoSshContainerMixin):
         if general_config is provided.
         """
         backup_backend = self.parent_cluster.params.get("backup_bucket_backend")
+        cluster_backend = self.parent_cluster.params.get("cluster_backend")
         backup_backend_config = {}
         if backup_backend == "s3":
-            if region and region != self.region:
-                backup_backend_config["region"] = region
+            if cluster_backend == "aws":
+                if region and region != self.region:
+                    backup_backend_config["region"] = region
+            elif cluster_backend == "oci":
+                # OCI is compatible with S3, so we use the S3 backend for OCI
+                # but requires different endpoint and region configuration, as well as access keys.
+                backup_backend_config["endpoint"] = (
+                    "https://idedxcgnkfkt.compat.objectstorage.us-ashburn-1.oci.customer-oci.com"
+                )
+                backup_backend_config["region"] = "us-ashburn-1"  # fixed, since that is where the bucket is configured
+                backup_backend_config["access_key_id"] = self.test_config.backup_oci_credentials["access_key_id"]
+                backup_backend_config["secret_access_key"] = self.test_config.backup_oci_credentials[
+                    "secret_access_key"
+                ]
+                # forces path-style addressing, e.g.
+                # endpoint/bucket instead of bucket.endpoint
+                backup_backend_config["provider"] = "Minio"
+            else:
+                raise ValueError(f"{backup_backend=} is not supported for {cluster_backend=}")
         elif backup_backend == "gcs":
             backup_backend_config["endpoint"] = "https://storage.googleapis.com"
         elif backup_backend == "azure":
