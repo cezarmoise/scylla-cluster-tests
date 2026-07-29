@@ -283,3 +283,87 @@ sizes:  # size of backed up dataset in GB
     one_one_restore_params:
       account_credential_id: 8968
       sm_cluster_id: "5bde9d5d-52e6-439c-a716-4121849d73b8"
+
+  oci_1tb_ashburn:
+    tag: "sm_20260709101544UTC"
+    locations:
+      - "s3:manager-backup-tests-us-ashburn-1"
+    exp_timeout: 28800  # 8 hours
+    scylla_version: "2026.3.0~dev-0.20260708.9c9ea2232c71"
+    number_of_nodes: 3
+    prohibit_verification_read: false
+    dataset:
+      schema:
+        1000gb_ics_quorum_1024_1_2026_3_0_dev:
+          - standard1: 1024
+      num_of_rows: 1073741824
+      compaction: "IncrementalCompactionStrategy"
+      cl: "QUORUM"
+      col_size: 1024
+      col_n: 1
+      replication: "NetworkTopologyStrategy"
+      rf: 3
+    one_one_restore_params: None
+
+  oci_1tb_phoenix:
+    tag: "sm_20260803161828UTC"
+    locations:
+      - "s3:manager-backup-tests-us-ashburn-1"
+    exp_timeout: 28800  # 8 hours
+    scylla_version: "2026.4.0~dev-0.20260802.78e39a643cdd"
+    number_of_nodes: 3
+    prohibit_verification_read: false
+    dataset:
+      schema:
+        1000gb_ics_quorum_1024_1_2026_4_0_dev:
+          - standard1: 1024
+      num_of_rows: 1073741824
+      compaction: "IncrementalCompactionStrategy"
+      cl: "QUORUM"
+      col_size: 1024
+      col_n: 1
+      replication: "NetworkTopologyStrategy"
+      rf: 3
+    one_one_restore_params: None
+
+  oci_1tb_ashburn_vnodes:
+    tag: "sm_20260710083657UTC"
+    locations:
+      - "s3:manager-backup-tests-us-ashburn-1"
+    exp_timeout: 28800  # 8 hours
+    scylla_version: "2026.3.0~dev-0.20260708.9c9ea2232c71"
+    number_of_nodes: 3
+    prohibit_verification_read: false
+    dataset:
+      schema:
+        1000gb_ics_quorum_1024_1_2026_3_0_dev:
+          - standard1: 1024
+      num_of_rows: 1073741824
+      compaction: "IncrementalCompactionStrategy"
+      cl: "QUORUM"
+      col_size: 1024
+      col_n: 1
+      replication: "NetworkTopologyStrategy"
+      rf: 3
+    one_one_restore_params: None
+
+  oci_1tb_phoenix_vnodes:
+    tag: "sm_20260804103556UTC"
+    locations:
+      - "s3:manager-backup-tests-us-ashburn-1"
+    exp_timeout: 28800  # 8 hours
+    scylla_version: "2026.4.0~dev-0.20260803.6a5b7cc948f6"
+    number_of_nodes: 3
+    prohibit_verification_read: false
+    dataset:
+      schema:
+        1000gb_ics_quorum_1024_1_2026_4_0_dev:
+          - standard1: 1024
+      num_of_rows: 1073741824
+      compaction: "IncrementalCompactionStrategy"
+      cl: "QUORUM"
+      col_size: 1024
+      col_n: 1
+      replication: "NetworkTopologyStrategy"
+      rf: 3
+    one_one_restore_params: None
