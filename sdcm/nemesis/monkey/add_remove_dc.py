@@ -6,6 +6,7 @@ from sdcm.exceptions import KillNemesis, UnsupportedNemesis
 from sdcm.nemesis import NemesisBaseClass
 from sdcm.provision.scylla_yaml import SeedProvider
 from sdcm.snitch_configuration import SnitchConfig
+from sdcm.utils.common import generate_random_string
 from sdcm.utils.decorators import retrying, skip_on_capacity_issues
 from sdcm.utils.features import is_tablets_feature_enabled
 from sdcm.utils.replication_strategy_utils import (
@@ -338,3 +339,17 @@ class AddRemoveDcNemesis(NemesisBaseClass):
                 self.decommission_new_nodes()
                 self.assert_new_dc_unregistered()
                 self.verify_multi_dc_keyspace(consistency_level="QUORUM")
+
+
+class StressWriteMonkey(NemesisBaseClass):
+    def disrupt(self):
+        ks_name = f"keyspace_stress_write_{generate_random_string(8)}"
+        write_cmd = (
+            f"cassandra-stress write no-warmup cl=QUORUM n=100000 -schema 'keyspace={ks_name} "
+            f"replication(strategy=NetworkTopologyStrategy,replication_factor=3)' "
+            f"-mode cql3 native -rate threads=5 -pop seq=1..100000 -log interval=5"
+        )
+        write_thread = self.runner.tester.run_stress_thread(
+            stress_cmd=write_cmd, round_robin=True, stop_test_on_failure=False
+        )
+        self.runner.tester.verify_stress_thread(write_thread, error_handler=self.runner._nemesis_stress_failure_handler)

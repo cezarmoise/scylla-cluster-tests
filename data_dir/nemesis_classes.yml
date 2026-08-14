@@ -96,6 +96,7 @@
 - StopStartInterfacesNetworkMonkey
 - StopStartMonkey
 - StopWaitStartMonkey
+- StressWriteMonkey
 - SwitchBetweenPasswordAuthAndSaslauthdAuth
 - TerminateAndRemoveNodeMonkey
 - TerminateKubernetesHostThenDecommissionAndAddScyllaNode
