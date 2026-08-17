@@ -9,13 +9,13 @@ prepare_write_cmd:
     -col 'n=FIXED(5) size=FIXED(128)'
     -mode cql3 native
     -log interval=5
-    -rate threads=2
+    -rate threads=20
   - >-
     cassandra-stress user profile=/tmp/cs_mv_si_keyspace1.yaml no-warmup ops'(insert=1)'
     n=2M
     -mode cql3 native
     -log interval=5
-    -rate threads=2
+    -rate threads=20
 
 stress_cmd:
   - >-
@@ -25,7 +25,7 @@ stress_cmd:
     -col 'n=FIXED(5) size=FIXED(128)'
     -mode cql3 native
     -log interval=5
-    -rate threads=1
+    -rate threads=10
     -pop 'dist=uniform(1..2M)'
   - >-
     cassandra-stress read cl=QUORUM no-warmup
@@ -34,32 +34,31 @@ stress_cmd:
     -col 'n=FIXED(5) size=FIXED(128)'
     -mode cql3 native
     -log interval=5
-    -rate threads=1
+    -rate threads=10
     -pop 'dist=uniform(1..2M)'
   - >-
     cassandra-stress user profile=/tmp/cs_mv_si_keyspace1.yaml no-warmup ops'(insert=1,read=1,mv_read1=1,mv_read2=1)'
     duration=700m
     -mode cql3 native
     -log interval=5
-    -rate threads=1
+    -rate threads=10
   - >-
     cassandra-stress user profile=/tmp/cs_mv_si_keyspace1.yaml no-warmup ops'(insert=1,read=1,si_read1=1,si_read2=1)'
     duration=700m
     -mode cql3 native
     -log interval=5
-    -rate threads=1
+    -rate threads=10
 
 
 n_db_nodes: 3
 n_loaders: 2
 
 sizing_db:
-  # Use >=4 (not exact 4) so OCI and GCE can match:
+  # Use >=8 (not exact 8) so OCI can match:
   # OCI DenseIO starts at 16 vCPU .
-  # GCE z3-highmem starts at 8 vCPUs.
-  # AWS/Azure still resolve to their 4-vCPU instances (smallest fitting).
-  vcpu: ">=4"
-  memory: ">=32"
+  # AWS/Azure/GCE still resolve to their 8-vCPU instances (smallest fitting).
+  vcpu: ">=8"
+  memory: ">=64"
 
 nemesis_class_name: ['SisyphusMonkey', 'SisyphusMonkey']
 nemesis_selector: ["GrowShrinkClusterNemesis","schema_changes and not disruptive"]
