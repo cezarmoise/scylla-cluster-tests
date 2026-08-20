@@ -1469,14 +1469,42 @@ class ManagerRestoreBenchmarkTests(ManagerTestFunctionsMixIn):
             self.db_cluster.nodes[0].run_cqlsh(cmd="grant scylla_admin to scylla_manager")
 
         self.log.info("Restoring the schema")
-        self.restore_with_manager_task(
-            mgr_cluster=mgr_cluster,
-            snapshot_tag=snapshot_data.tag,
-            timeout=600,
-            restore_schema=True,
-            location_list=locations,
+        # self.restore_with_manager_task(
+        #     mgr_cluster=mgr_cluster,
+        #     snapshot_tag=snapshot_data.tag,
+        #     timeout=600,
+        #     restore_schema=True,
+        #     location_list=locations,
+        # )
+        self.db_cluster.nodes[0].run_cqlsh(
+            cmd="""
+            CREATE KEYSPACE "1024gb_ics_quorum_1024_1_2025_1_10"
+            WITH replication = {'class': 'org.apache.cassandra.locator.NetworkTopologyStrategy', 'us-east-1': '3'}
+            AND durable_writes = true
+            AND tablets = {'enabled': true};
+        """
         )
-
+        self.db_cluster.nodes[0].run_cqlsh(
+            cmd="""
+            CREATE TABLE "1024gb_ics_quorum_1024_1_2025_1_10".standard1 (
+                key blob,
+                "C0" blob,
+                PRIMARY KEY (key)
+            ) WITH bloom_filter_fp_chance = 0.01
+            AND caching = {'keys': 'ALL', 'rows_per_partition': 'ALL'}
+            AND comment = ''
+            AND compaction = {'class': 'IncrementalCompactionStrategy'}
+            AND compression = {}
+            AND crc_check_chance = 1
+            AND default_time_to_live = 0
+            AND gc_grace_seconds = 864000
+            AND max_index_interval = 2048
+            AND memtable_flush_period_in_ms = 0
+            AND min_index_interval = 128
+            AND speculative_retry = '99.0PERCENTILE'
+            AND tombstone_gc = {'mode': 'timeout', 'propagation_delay_in_seconds': '3600'};
+        """
+        )
         if restore_outside_manager:
             self.log.info("Restoring the data outside the Manager")
             with ExecutionTimer() as timer:
