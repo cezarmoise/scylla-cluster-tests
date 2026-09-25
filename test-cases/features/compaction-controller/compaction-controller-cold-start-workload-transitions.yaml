@@ -1,0 +1,30 @@
+
+test_duration: 240
+
+# Phase 1: write burst on a cold, empty cluster.
+prepare_write_cmd: [
+  "cassandra-stress write no-warmup cl=QUORUM n=60000000 -schema 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=300 fixed=40000/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..60000000",
+]
+
+# Phase 2: mixed steady-state load, starts right after the write burst.
+stress_cmd: [
+  "cassandra-stress mixed no-warmup cl=QUORUM duration=180m -schema 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=150 fixed=15000/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=60000001..150000000"
+]
+
+# Phase 3: read-mostly tail, gated by space_node_threshold - only starts once the cluster
+# is "warm" (past the disk-usage threshold), layering on top of the still-running phase 2 load.
+stress_read_cmd: [
+  "cassandra-stress read no-warmup cl=QUORUM duration=100m -schema 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=150 fixed=15000/s' -col 'size=FIXED(128) n=FIXED(8)' -pop 'dist=gauss(1..150000000,75000000,7500000)'"
+]
+space_node_threshold: 16106127360
+
+n_db_nodes: 3
+simulated_racks: 3
+instance_type_db: 'i4i.large'
+
+n_loaders: 3
+instance_type_loader: 'c6i.2xlarge'
+instance_type_monitor: 't3.large'
+
+user_prefix: 'compaction-controller-test'
+round_robin: true

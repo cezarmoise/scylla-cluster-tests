@@ -1,0 +1,27 @@
+
+test_duration: 300
+prepare_write_cmd: [
+  "cassandra-stress write no-warmup cl=QUORUM n=150000000 -schema 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate threads=200 -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..150000000",
+]
+
+# SCT has no native idle-gap scheduling: all stress_cmd entries start together (10s apart) and
+# run concurrently for their own duration. This approximates bursts by layering a constant
+# low-rate background read against several short, high-rate write spikes of varying length.
+stress_cmd: [
+  "cassandra-stress read no-warmup cl=QUORUM duration=270m -schema 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=50 fixed=3000/s' -col 'size=FIXED(128) n=FIXED(8)' -pop 'dist=gauss(1..150000000,75000000,7500000)'",
+  "cassandra-stress write no-warmup cl=QUORUM duration=15m -schema 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=300 fixed=60000/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=150000001..165000000",
+  "cassandra-stress write no-warmup cl=QUORUM duration=15m -schema 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=300 fixed=60000/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=165000001..180000000",
+  "cassandra-stress write no-warmup cl=QUORUM duration=15m -schema 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=300 fixed=60000/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=180000001..195000000",
+  "cassandra-stress write no-warmup cl=QUORUM duration=15m -schema 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=300 fixed=60000/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=195000001..210000000",
+]
+
+n_db_nodes: 3
+simulated_racks: 3
+instance_type_db: 'i4i.large'
+
+n_loaders: 3
+instance_type_loader: 'c6i.2xlarge'
+instance_type_monitor: 't3.large'
+
+user_prefix: 'compaction-controller-test'
+round_robin: true

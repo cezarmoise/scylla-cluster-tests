@@ -1,0 +1,22 @@
+
+test_duration: 240
+prepare_write_cmd: [
+  "cassandra-stress write no-warmup cl=QUORUM n=50000000 -schema 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate threads=200 -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..50000000",
+]
+
+# sustained write-only load at a high fixed rate to keep flush/compaction backlogged for the
+# whole run (throttled, not unbounded, to avoid c-s request timeouts)
+stress_cmd: [
+  "cassandra-stress write no-warmup cl=QUORUM duration=210m -schema 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=300 fixed=80000/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=50000001..500000000"
+]
+
+n_db_nodes: 3
+simulated_racks: 3
+instance_type_db: 'i4i.large'
+
+n_loaders: 3
+instance_type_loader: 'c6i.2xlarge'
+instance_type_monitor: 't3.large'
+
+user_prefix: 'compaction-controller-test'
+round_robin: true

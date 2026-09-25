@@ -1,0 +1,33 @@
+
+test_duration: 1440
+prepare_stress_duration: 600
+
+stress_template_context:
+  fill_percent: 80
+  replication_factor: 3
+  row_size_bytes: 1034
+  total_rows: "{{ ((effective_disk_size_bytes * db_node_count_per_dc * fill_percent) // 100 // replication_factor // row_size_bytes) | int }}"
+  rows_per_cmd: "{{ total_rows // 4 }}"
+  hotset_rows: "{{ total_rows // 2 }}"
+
+prepare_write_cmd:
+  - "cassandra-stress write no-warmup cl=QUORUM n={{ rows_per_cmd }} -schema 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=200 fixed=15000/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq=1..{{ rows_per_cmd }}"
+  - "cassandra-stress write no-warmup cl=QUORUM n={{ rows_per_cmd }} -schema 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=200 fixed=15000/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq={{ rows_per_cmd + 1 }}..{{ rows_per_cmd * 2 }}"
+  - "cassandra-stress write no-warmup cl=QUORUM n={{ rows_per_cmd }} -schema 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=200 fixed=15000/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq={{ (rows_per_cmd * 2) + 1 }}..{{ rows_per_cmd * 3 }}"
+  - "cassandra-stress write no-warmup cl=QUORUM n={{ rows_per_cmd }} -schema 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=200 fixed=15000/s' -col 'size=FIXED(128) n=FIXED(8)' -pop seq={{ (rows_per_cmd * 3) + 1 }}..{{ rows_per_cmd * 4 }}"
+
+# no new keys past the filled range: overwrite/read the existing hotset so disk usage stays
+# near the fill_percent target instead of growing past it and triggering write rejection
+stress_cmd:
+  - "cassandra-stress mixed no-warmup cl=QUORUM duration=1200m -schema 'replication(strategy=NetworkTopologyStrategy,replication_factor=3)' -mode cql3 native -rate 'threads=150 fixed=10000/s' -col 'size=FIXED(128) n=FIXED(8)' -pop 'dist=gauss(1..{{ hotset_rows }},{{ hotset_rows // 2 }},{{ hotset_rows // 100 }})'"
+
+n_db_nodes: 3
+simulated_racks: 3
+instance_type_db: 'i4i.large'
+
+n_loaders: 3
+instance_type_loader: 'c6i.2xlarge'
+instance_type_monitor: 't3.large'
+
+user_prefix: 'compaction-controller-test'
+round_robin: true
