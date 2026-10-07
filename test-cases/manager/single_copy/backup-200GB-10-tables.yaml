@@ -1,0 +1,35 @@
+test_duration: 720
+
+instance_type_db: 'i8ge.xlarge'
+sizing_loader:
+  vcpu: 4
+  memory: '>=16'
+
+n_db_nodes: 3
+n_loaders: 3
+
+round_robin: true
+
+# 200GB dataset per rack in 10 tables (20GB each, 1 row = 1Kb, RF=3): first half of each table is written before the repair, second half after it
+prepare_write_cmd: ["cassandra-stress user profile=/tmp/cs_single_copy_table1.yaml 'ops(insert=1)' cl=QUORUM n=10737418 -mode cql3 native -rate threads=150 -pop seq=1..10737418",
+                    "cassandra-stress user profile=/tmp/cs_single_copy_table2.yaml 'ops(insert=1)' cl=QUORUM n=10737418 -mode cql3 native -rate threads=150 -pop seq=1..10737418",
+                    "cassandra-stress user profile=/tmp/cs_single_copy_table3.yaml 'ops(insert=1)' cl=QUORUM n=10737418 -mode cql3 native -rate threads=150 -pop seq=1..10737418",
+                    "cassandra-stress user profile=/tmp/cs_single_copy_table4.yaml 'ops(insert=1)' cl=QUORUM n=10737418 -mode cql3 native -rate threads=150 -pop seq=1..10737418",
+                    "cassandra-stress user profile=/tmp/cs_single_copy_table5.yaml 'ops(insert=1)' cl=QUORUM n=10737418 -mode cql3 native -rate threads=150 -pop seq=1..10737418",
+                    "cassandra-stress user profile=/tmp/cs_single_copy_table6.yaml 'ops(insert=1)' cl=QUORUM n=10737418 -mode cql3 native -rate threads=150 -pop seq=1..10737418",
+                    "cassandra-stress user profile=/tmp/cs_single_copy_table7.yaml 'ops(insert=1)' cl=QUORUM n=10737418 -mode cql3 native -rate threads=150 -pop seq=1..10737418",
+                    "cassandra-stress user profile=/tmp/cs_single_copy_table8.yaml 'ops(insert=1)' cl=QUORUM n=10737418 -mode cql3 native -rate threads=150 -pop seq=1..10737418",
+                    "cassandra-stress user profile=/tmp/cs_single_copy_table9.yaml 'ops(insert=1)' cl=QUORUM n=10737418 -mode cql3 native -rate threads=150 -pop seq=1..10737418",
+                    "cassandra-stress user profile=/tmp/cs_single_copy_table10.yaml 'ops(insert=1)' cl=QUORUM n=10737418 -mode cql3 native -rate threads=150 -pop seq=1..10737418"]
+stress_cmd: ["cassandra-stress user profile=/tmp/cs_single_copy_table1.yaml 'ops(insert=1)' cl=QUORUM n=10737418 -mode cql3 native -rate threads=150 -pop seq=10737419..21474836",
+             "cassandra-stress user profile=/tmp/cs_single_copy_table2.yaml 'ops(insert=1)' cl=QUORUM n=10737418 -mode cql3 native -rate threads=150 -pop seq=10737419..21474836",
+             "cassandra-stress user profile=/tmp/cs_single_copy_table3.yaml 'ops(insert=1)' cl=QUORUM n=10737418 -mode cql3 native -rate threads=150 -pop seq=10737419..21474836",
+             "cassandra-stress user profile=/tmp/cs_single_copy_table4.yaml 'ops(insert=1)' cl=QUORUM n=10737418 -mode cql3 native -rate threads=150 -pop seq=10737419..21474836",
+             "cassandra-stress user profile=/tmp/cs_single_copy_table5.yaml 'ops(insert=1)' cl=QUORUM n=10737418 -mode cql3 native -rate threads=150 -pop seq=10737419..21474836",
+             "cassandra-stress user profile=/tmp/cs_single_copy_table6.yaml 'ops(insert=1)' cl=QUORUM n=10737418 -mode cql3 native -rate threads=150 -pop seq=10737419..21474836",
+             "cassandra-stress user profile=/tmp/cs_single_copy_table7.yaml 'ops(insert=1)' cl=QUORUM n=10737418 -mode cql3 native -rate threads=150 -pop seq=10737419..21474836",
+             "cassandra-stress user profile=/tmp/cs_single_copy_table8.yaml 'ops(insert=1)' cl=QUORUM n=10737418 -mode cql3 native -rate threads=150 -pop seq=10737419..21474836",
+             "cassandra-stress user profile=/tmp/cs_single_copy_table9.yaml 'ops(insert=1)' cl=QUORUM n=10737418 -mode cql3 native -rate threads=150 -pop seq=10737419..21474836",
+             "cassandra-stress user profile=/tmp/cs_single_copy_table10.yaml 'ops(insert=1)' cl=QUORUM n=10737418 -mode cql3 native -rate threads=150 -pop seq=10737419..21474836"]
+
+user_prefix: manager-single-copy
