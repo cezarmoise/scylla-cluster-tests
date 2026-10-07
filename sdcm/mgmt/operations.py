@@ -346,6 +346,7 @@ class SnapshotData:
       created via c-s user profile.
     - node_ids: list of node ids where backup was created
     - one_one_restore_params: dict with parameters for 1-1 restore ('account_credential_id' and 'sm_cluster_id')
+    - prefix: backup prefix in the bucket, for backups made via Scylla API instead of Manager
     """
 
     locations: list[str]
@@ -358,6 +359,7 @@ class SnapshotData:
     prohibit_verification_read: bool
     node_ids: list[str]
     one_one_restore_params: dict[str, str | int] | None
+    prefix: str | None = None
 
 
 class SnapshotOperations(ClusterTester):
@@ -394,6 +396,7 @@ class SnapshotOperations(ClusterTester):
             prohibit_verification_read=snapshot_dict["prohibit_verification_read"],
             node_ids=snapshot_dict.get("node_ids"),
             one_one_restore_params=snapshot_dict.get("one_one_restore_params"),
+            prefix=snapshot_dict.get("prefix"),
         )
         return snapshot_data
 
@@ -576,18 +579,22 @@ class SnapshotPreparerOperations(ClusterTester):
             raise ValueError(f"Overall rows number ({overall_rows_num}) should be divisible by the number of loaders")
         return int(overall_rows_num / num_of_loaders)
 
-    def build_snapshot_preparer_cs_write_cmd(self, backup_size: int) -> tuple[str, list[str]]:
+    def build_snapshot_preparer_cs_write_cmd(
+        self, backup_size: int, rows_range: tuple[int, int] | None = None
+    ) -> tuple[str, list[str]]:
         """Build the c-s command from 'mgmt_snapshots_preparer_params' parameters based on backup size.
 
         Extra params complete the missing part of command template.
         Among them are keyspace_name, num_of_rows, sequence_start and sequence_end.
+        `rows_range` (first, last row, inclusive) writes only that part of the dataset.
 
         Returns:
             - ks_name: keyspace name
             - cs_cmds: list of c-s commands to be executed
         """
         overall_num_of_rows = backup_size * 1024 * 1024  # Considering 1 row = 1Kb
-        rows_per_loader = self.calculate_rows_per_loader(overall_num_of_rows)
+        first_row, last_row = rows_range or (1, overall_num_of_rows)
+        rows_per_loader = self.calculate_rows_per_loader(last_row - first_row + 1)
 
         preparer_params = self.params.get("mgmt_snapshots_preparer_params")
 
@@ -604,8 +611,8 @@ class SnapshotPreparerOperations(ClusterTester):
         num_of_loaders = self._get_total_loaders()
         for loader_index in range(num_of_loaders):
             # Sequence params should be defined for every loader thread separately since vary for each thread
-            params_to_use_in_cs_cmd["sequence_start"] = rows_per_loader * loader_index + 1
-            params_to_use_in_cs_cmd["sequence_end"] = rows_per_loader * (loader_index + 1)
+            params_to_use_in_cs_cmd["sequence_start"] = first_row + rows_per_loader * loader_index
+            params_to_use_in_cs_cmd["sequence_end"] = first_row - 1 + rows_per_loader * (loader_index + 1)
 
             cs_cmd = cs_cmd_template.format(**params_to_use_in_cs_cmd)
             cs_cmds.append(cs_cmd)
