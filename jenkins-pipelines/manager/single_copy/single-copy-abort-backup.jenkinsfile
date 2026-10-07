@@ -1,0 +1,14 @@
+#!groovy
+
+// trick from https://github.com/jenkinsci/workflow-cps-global-lib-plugin/pull/43
+def lib = library identifier: 'sct@snapshot', retriever: legacySCM(scm)
+
+managerPipeline(
+    backend: 'aws',
+    region: 'us-east-1',
+    // tablet-aware restore of cluster backups needs scylladb#31138, override with a build of that branch
+    scylla_version: 'master:latest',
+    billing_project: 'Single-copy backup',
+    test_name: 'single_copy_test.SingleCopyTest.test_abort_backup',
+    test_config: '''["test-cases/manager/single_copy/backup.yaml", "configurations/object_storage_s3.yaml"]''',
+)
