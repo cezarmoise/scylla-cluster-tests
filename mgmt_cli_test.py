@@ -1142,7 +1142,7 @@ class ManagerHelperTests(ManagerTestFunctionsMixIn):
         self.log.info("Send snapshot details to Argus")
         snapshot_details = {
             "tag": backup_task.get_snapshot_tag(),
-            "size": backup_size,
+            "duration": int(backup_task.duration.total_seconds()),
             "locations": ",".join(location_list),
             "ks_name": ks_name,
             "scylla_version": self.params.get_version_based_on_conf()[0],
@@ -1152,6 +1152,10 @@ class ManagerHelperTests(ManagerTestFunctionsMixIn):
         }
         if size_on_bucket is not None:
             snapshot_details["size_on_bucket"] = size_on_bucket
+        try:
+            snapshot_details["size"] = self.get_keyspaces_disk_size_gb([ks_name])
+        except Exception as exc:  # noqa: BLE001
+            self.log.warning("Failed to get keyspace size from monitoring, not reporting it: %s", exc)
         self.log.debug(f"Snapshot details: {snapshot_details}")
         send_manager_snapshot_details_to_argus(
             argus_client=self.test_config.argus_client(),
