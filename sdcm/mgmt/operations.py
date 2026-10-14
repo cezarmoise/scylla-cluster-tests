@@ -116,6 +116,14 @@ class ClusterOperations(ClusterTester):
         self._cluster_flush_and_major_compaction(keyspace, table)
         self.run_fstrim_on_all_db_nodes()
 
+    def get_keyspaces_disk_size_gb(self, keyspaces: list[str]) -> int:
+        """Total sstables size of the keyspaces on all DB nodes (all replicas), from monitoring metrics."""
+        query = f'sum(scylla_column_family_total_disk_space{{ks=~"{"|".join(keyspaces)}"}})'
+        now = int(time.time())
+        result = self.prometheus_db.query(query=query, start=now - 60, end=now)
+        assert result and result[0]["values"], f"No results from Prometheus for query: {query}"
+        return int(float(result[0]["values"][-1][1]) / 1024**3)
+
 
 class BucketOperations(ClusterTester):
     backup_azure_blob_service = None
