@@ -93,7 +93,8 @@ class NetworkTopologyReplicationStrategy(ReplicationStrategy):
 
     @property
     def replication_factors(self) -> list:
-        return [int(rf) for rf in self.replication_factors_per_dc.values()]
+        # rack list replication, e.g. {'dc1': ['rack1', 'rack2']}, has RF equal to the number of racks
+        return [len(rf) if isinstance(rf, list) else int(rf) for rf in self.replication_factors_per_dc.values()]
 
 
 class LocalReplicationStrategy(ReplicationStrategy):
