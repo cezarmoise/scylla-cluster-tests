@@ -302,10 +302,7 @@ class SingleCopyTest(ManagerTestFunctionsMixIn):
         return duration
 
     def _verify_data_on_each_node(self) -> None:
-        """Read the whole snapshot dataset with CL=ONE from each node only, in parallel.
-
-        Must run before any post-restore repair, as repair would fix replicas restore failed to populate.
-        """
+        """Read the whole snapshot dataset with CL=ONE from each node only, in parallel."""
         if self.snapshot.prohibit_verification_read:
             self.log.info("Skip verification read, prohibited by the snapshot")
             return
@@ -388,16 +385,14 @@ class SingleCopyTest(ManagerTestFunctionsMixIn):
             argus_client=self.test_config.argus_client(), snapshot_details=snapshot_details
         )
 
-    def _verify_repair_and_send_restore_results(self, restore_time: int, label: str) -> None:
-        """Verify restored data on each node, then repair and send restore results to Argus."""
-        self.log.info("Verify restored data on each node with CL=ONE reads")
-        self._verify_data_on_each_node()
-
+    def _post_restore_repair(self) -> int:
+        """Run incremental repair after restore. Return duration in seconds."""
         self.log.info("Run post restore incremental repair")
         with ExecutionTimer() as timer:
             self._repair()
-        repair_time = int(timer.duration.total_seconds())
+        return int(timer.duration.total_seconds())
 
+    def _send_restore_results(self, restore_time: int, repair_time: int, label: str) -> None:
         results = {
             "restore time": restore_time,
             "repair time": repair_time,
@@ -471,13 +466,15 @@ class SingleCopyTest(ManagerTestFunctionsMixIn):
         Steps:
         1. Create the schema of the snapshot.
         2. Restore all tables via `/storage_service/tablets/restore`.
-        3. Read all data with CL=ONE from each node only, so missing replicas are caught.
-        4. Run incremental repair and send restore results to Argus.
+        3. Run incremental repair and send restore results to Argus.
+        4. Read all data with CL=ONE from each node only.
         """
         assert not self.snapshot.node_ids, "Snapshot is a per node backup, use test_restore_old_format"
         self._create_snapshot_schema()
         restore_time = self._restore()
-        self._verify_repair_and_send_restore_results(restore_time, label="single copy")
+        repair_time = self._post_restore_repair()
+        self._send_restore_results(restore_time, repair_time, label="single copy")
+        self._verify_data_on_each_node()
 
     def test_abort_backup(self):
         """Abort a running single copy backup, then check a new backup succeeds."""
@@ -505,7 +502,9 @@ class SingleCopyTest(ManagerTestFunctionsMixIn):
             self._wait_for_task(task_id, timeout=self.snapshot.exp_timeout)
 
         restore_time = self._restore()
-        self._verify_repair_and_send_restore_results(restore_time, label="after abort")
+        repair_time = self._post_restore_repair()
+        self._send_restore_results(restore_time, repair_time, label="after abort")
+        self._verify_data_on_each_node()
 
     def test_restore_old_format(self):
         """Restore a per node (manifest `scope=node`) backup, made by `test_backup_old_format`, via tablet-aware restore.
@@ -513,7 +512,7 @@ class SingleCopyTest(ManagerTestFunctionsMixIn):
         Steps:
         1. Create the schema of the snapshot.
         2. Restore all tables with one manifest per backed up node.
-        3. Read all data with CL=ONE from each node only, then repair and send restore results to Argus.
+        3. Repair, send restore results to Argus, then read all data with CL=ONE from each node only.
         """
         assert self.snapshot.node_ids, "Snapshot has no `node_ids`, it is not a per node backup"
         dcs = self.get_all_dcs_names()
@@ -521,4 +520,6 @@ class SingleCopyTest(ManagerTestFunctionsMixIn):
 
         self._create_snapshot_schema()
         restore_time = self._restore()
-        self._verify_repair_and_send_restore_results(restore_time, label="old format")
+        repair_time = self._post_restore_repair()
+        self._send_restore_results(restore_time, repair_time, label="old format")
+        self._verify_data_on_each_node()
