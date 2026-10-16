@@ -283,3 +283,23 @@ sizes:  # size of backed up dataset in GB
     one_one_restore_params:
       account_credential_id: 8968
       sm_cluster_id: "5bde9d5d-52e6-439c-a716-4121849d73b8"
+  single_copy_214gb_1792147500:
+    tag: sct_single_copy_backup_1792146926
+    locations:
+    - s3:manager-backup-tests-us-east-1
+    prefix: single_copy/b03d043e-e481-4e71-8e99-02fcd0c53112/backup
+    exp_timeout: 28800
+    scylla_version: 2026.4.0~dev
+    number_of_nodes: 3
+    prohibit_verification_read: false
+    dataset:
+      schema:
+        keyspace1:
+        - standard1: 214
+      num_of_rows: 214748364
+      compaction: IncrementalCompactionStrategy
+      cl: ONE
+      col_size: 1024
+      col_n: 1
+      replication: NetworkTopologyStrategy
+      rf: 3
