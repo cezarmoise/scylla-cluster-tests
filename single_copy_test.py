@@ -30,6 +30,7 @@ from sdcm.argus_results import (
 from sdcm.cluster import HOUR_IN_SEC
 from sdcm.mgmt.operations import ManagerTestFunctionsMixIn, SnapshotData
 from sdcm.rest.remote_curl_client import RemoteCurlClient
+from sdcm.sct_events.system import TestFrameworkEvent
 from sdcm.utils.cluster_tools import flush_nodes
 from sdcm.utils.replication_strategy_utils import ReplicationStrategy
 from sdcm.utils.time_utils import ExecutionTimer
@@ -104,8 +105,12 @@ class SingleCopyTest(ManagerTestFunctionsMixIn):
         assert status["state"] == "done", f"Task {task_id} failed: {status.get('error')}"
         return status
 
+    def _report_error(self, message: str) -> None:
+        """Publish an error event: fails the test without stopping it, so the following checks still run."""
+        TestFrameworkEvent(source=self.__class__.__name__, message=message).publish()
+
     def _abort_task_in_progress(self, task_id: str) -> None:
-        """Wait until the task makes progress, abort it and check it fails with an abort error."""
+        """Wait until the task makes progress, abort it and check it stops early with an abort error."""
 
         def _in_progress_or_finished_status():
             status = self._get_task_status(task_id)
@@ -127,11 +132,12 @@ class SingleCopyTest(ManagerTestFunctionsMixIn):
         self._scylla_api("POST", f"task_manager/abort_task/{task_id}")
 
         status = self._wait_for_task(task_id, timeout=HOUR_IN_SEC, step=5)
-        assert status["state"] == "failed", f"Task {task_id} is expected to fail after abort: {status}"
-        assert "abort" in status["error"].lower(), f"Task {task_id} failed with unexpected error: {status['error']}"
-        assert status["progress_completed"] < status["progress_total"], (
-            f"Task {task_id} completed despite abort: {status}"
-        )
+        if status["state"] != "failed":
+            self._report_error(f"Task {task_id} is expected to fail after abort: {status}")
+        elif "abort" not in status["error"].lower():
+            self._report_error(f"Task {task_id} failed with unexpected error: {status['error']}")
+        if status["progress_completed"] >= status["progress_total"]:
+            self._report_error(f"Task {task_id} completed despite abort: {status}")
 
     def _get_object_storage_endpoint(self) -> str:
         """Name of the object storage endpoint configured in scylla.yaml."""
@@ -167,7 +173,7 @@ class SingleCopyTest(ManagerTestFunctionsMixIn):
         self.log.info("Size on bucket under %s: %s GiB", prefix, size_gib)
         return size_gib
 
-    def _assert_aborted_backup_is_partial(self, aborted_prefix: str, full_prefix: str) -> None:
+    def _check_aborted_backup_is_partial(self, aborted_prefix: str, full_prefix: str) -> None:
         """Compare the objects of an aborted backup with a full backup of the same data, taken after it.
 
         The aborted backup must have uploaded no snapshot metadata (manifests) and only part of the sstables,
@@ -175,26 +181,26 @@ class SingleCopyTest(ManagerTestFunctionsMixIn):
         """
         if (aborted := self._get_prefix_objects(aborted_prefix)) is None:
             return
+        aborted_sstables = {key: size for key, size in aborted.items() if key.startswith("sstables/")}
         full_sstables = {
             key: size for key, size in self._get_prefix_objects(full_prefix).items() if key.startswith("sstables/")
         }
         self.log.info(
-            "Aborted backup uploaded %s objects of %s GiB, the full backup has %s sstable objects of %s GiB",
-            len(aborted),
-            round(sum(aborted.values()) / 1024**3, 3),
+            "Aborted backup uploaded %s sstable objects of %s GiB, the full backup has %s of %s GiB",
+            len(aborted_sstables),
+            round(sum(aborted_sstables.values()) / 1024**3, 3),
             len(full_sstables),
             round(sum(full_sstables.values()) / 1024**3, 3),
         )
-        metadata = sorted(key for key in aborted if not key.startswith("sstables/"))
-        assert not metadata, f"Aborted backup uploaded snapshot metadata: {metadata}"
-        unexpected = sorted(aborted.items() - full_sstables.items())
-        assert not unexpected, (
-            f"Aborted backup uploaded {len(unexpected)} objects missing from the full backup or of different size, "
-            f"e.g. {unexpected[:5]}"
-        )
-        assert len(aborted) < len(full_sstables), (
-            f"Aborted backup uploaded all {len(full_sstables)} sstable objects of the full backup"
-        )
+        if metadata := sorted(aborted.keys() - aborted_sstables.keys()):
+            self._report_error(f"Aborted backup uploaded snapshot metadata: {metadata}")
+        if unexpected := sorted(aborted_sstables.items() - full_sstables.items()):
+            self._report_error(
+                f"Aborted backup uploaded {len(unexpected)} sstable objects missing from the full backup "
+                f"or of different size, e.g. {unexpected[:5]}"
+            )
+        if len(aborted_sstables) >= len(full_sstables):
+            self._report_error(f"Aborted backup uploaded all {len(full_sstables)} sstable objects of the full backup")
 
     def _repair(self) -> None:
         for keyspace in self.keyspaces:
@@ -563,7 +569,7 @@ class SingleCopyTest(ManagerTestFunctionsMixIn):
 
         snapshot_tag, prefix, duration = self._cluster_backup()
         self._send_snapshot_details(snapshot_tag, prefix, duration)
-        self._assert_aborted_backup_is_partial(aborted_prefix, prefix)
+        self._check_aborted_backup_is_partial(aborted_prefix, prefix)
 
     def test_abort_restore(self):
         """Abort a running restore, then check a new restore resumes it and restores all data.
