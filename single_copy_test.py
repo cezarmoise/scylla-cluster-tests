@@ -129,6 +129,9 @@ class SingleCopyTest(ManagerTestFunctionsMixIn):
         status = self._wait_for_task(task_id, timeout=HOUR_IN_SEC, step=5)
         assert status["state"] == "failed", f"Task {task_id} is expected to fail after abort: {status}"
         assert "abort" in status["error"].lower(), f"Task {task_id} failed with unexpected error: {status['error']}"
+        assert status["progress_completed"] < status["progress_total"], (
+            f"Task {task_id} completed despite abort: {status}"
+        )
 
     def _get_object_storage_endpoint(self) -> str:
         """Name of the object storage endpoint configured in scylla.yaml."""
