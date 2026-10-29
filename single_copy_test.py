@@ -151,15 +151,50 @@ class SingleCopyTest(ManagerTestFunctionsMixIn):
     def _new_prefix(self, name: str) -> str:
         return f"single_copy/{self.test_config.test_id()}/{name}"
 
-    def _get_prefix_size_on_bucket(self, prefix: str) -> float | None:
-        """Total size of objects under the prefix, in GiB. None if the provider is not supported."""
+    def _get_prefix_objects(self, prefix: str) -> dict[str, int] | None:
+        """Size of each object under the prefix, by its path relative to the prefix. None if the provider is not supported."""
         provider = self.location.split(":")[-2]
         if (lister := self._bucket_object_listers.get(provider)) is None:
-            self.log.info("Size on bucket calculation is not implemented for '%s' backend, skipping", provider)
+            self.log.info("Listing bucket objects is not implemented for '%s' backend, skipping", provider)
             return None
-        size_gib = round(sum(size for _, size in lister(self.bucket, [f"{prefix}/"])) / 1024**3, 3)
+        return {key.removeprefix(f"{prefix}/"): size for key, size in lister(self.bucket, [f"{prefix}/"])}
+
+    def _get_prefix_size_on_bucket(self, prefix: str) -> float | None:
+        """Total size of objects under the prefix, in GiB. None if the provider is not supported."""
+        if (objects := self._get_prefix_objects(prefix)) is None:
+            return None
+        size_gib = round(sum(objects.values()) / 1024**3, 3)
         self.log.info("Size on bucket under %s: %s GiB", prefix, size_gib)
         return size_gib
+
+    def _assert_aborted_backup_is_partial(self, aborted_prefix: str, full_prefix: str) -> None:
+        """Compare the objects of an aborted backup with a full backup of the same data, taken after it.
+
+        The aborted backup must have uploaded no snapshot metadata (manifests) and only part of the sstables,
+        each of them complete, i.e. present in the full backup with the same size.
+        """
+        if (aborted := self._get_prefix_objects(aborted_prefix)) is None:
+            return
+        full_sstables = {
+            key: size for key, size in self._get_prefix_objects(full_prefix).items() if key.startswith("sstables/")
+        }
+        self.log.info(
+            "Aborted backup uploaded %s objects of %s GiB, the full backup has %s sstable objects of %s GiB",
+            len(aborted),
+            round(sum(aborted.values()) / 1024**3, 3),
+            len(full_sstables),
+            round(sum(full_sstables.values()) / 1024**3, 3),
+        )
+        metadata = sorted(key for key in aborted if not key.startswith("sstables/"))
+        assert not metadata, f"Aborted backup uploaded snapshot metadata: {metadata}"
+        unexpected = sorted(aborted.items() - full_sstables.items())
+        assert not unexpected, (
+            f"Aborted backup uploaded {len(unexpected)} objects missing from the full backup or of different size, "
+            f"e.g. {unexpected[:5]}"
+        )
+        assert len(aborted) < len(full_sstables), (
+            f"Aborted backup uploaded all {len(full_sstables)} sstable objects of the full backup"
+        )
 
     def _repair(self) -> None:
         for keyspace in self.keyspaces:
@@ -515,17 +550,20 @@ class SingleCopyTest(ManagerTestFunctionsMixIn):
         self._verify_data_on_each_node()
 
     def test_abort_backup(self):
-        """Abort a running single copy backup, then check a new backup succeeds."""
+        """Abort a running single copy backup, then check a new backup succeeds.
+
+        Then compare the objects of both backups: the aborted one must have stopped uploading mid-flight.
+        """
         self._write_data(repaired_percent=50)
 
         snapshot_tag = f"sct_single_copy_aborted_{int(time.time())}"
         aborted_prefix = self._new_prefix("aborted")
         self._abort_task_in_progress(self._start_cluster_backup(snapshot_tag, aborted_prefix))
-        self._get_prefix_size_on_bucket(aborted_prefix)
         self._clear_snapshot(snapshot_tag)
 
         snapshot_tag, prefix, duration = self._cluster_backup()
         self._send_snapshot_details(snapshot_tag, prefix, duration)
+        self._assert_aborted_backup_is_partial(aborted_prefix, prefix)
 
     def test_abort_restore(self):
         """Abort a running restore, then check a new restore resumes it and restores all data.
