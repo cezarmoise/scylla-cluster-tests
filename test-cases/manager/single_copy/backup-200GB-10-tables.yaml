@@ -9,6 +9,7 @@ n_db_nodes: 3
 n_loaders: 3
 
 round_robin: true
+mgmt_flush_and_wait_for_compactions: true
 
 # 200GB dataset per rack in 10 tables (20GB each, 1 row = 1Kb, RF=3): first half of each table is written before the repair, second half after it
 prepare_write_cmd: ["cassandra-stress user profile=/tmp/cs_single_copy_table1.yaml 'ops(insert=1)' cl=QUORUM n=10737418 -mode cql3 native -rate threads=150 -pop seq=1..10737418",

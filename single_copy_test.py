@@ -30,6 +30,7 @@ from sdcm.argus_results import (
 from sdcm.cluster import HOUR_IN_SEC
 from sdcm.mgmt.operations import ManagerTestFunctionsMixIn, SnapshotData
 from sdcm.rest.remote_curl_client import RemoteCurlClient
+from sdcm.utils.cluster_tools import flush_nodes
 from sdcm.utils.replication_strategy_utils import ReplicationStrategy
 from sdcm.utils.time_utils import ExecutionTimer
 
@@ -186,17 +187,28 @@ class SingleCopyTest(ManagerTestFunctionsMixIn):
         self._repair()
         self._assert_tablets_repaired()
 
+    def _flush_and_wait_for_compactions(self) -> None:
+        if not self.params.get("mgmt_flush_and_wait_for_compactions"):
+            return
+        # flush first, otherwise the backup snapshot flushes memtables and triggers new compactions
+        for keyspace in self.keyspaces:
+            flush_nodes(cluster=self.db_cluster, keyspace=keyspace)
+        self.wait_no_compactions_running(n=240)
+
     def _write_data(self, repaired_percent: int) -> None:
         """Write `mgmt_prepare_snapshot_size` GB, the first `repaired_percent` of it is repaired, the rest is not.
 
         Without `mgmt_prepare_snapshot_size` (e.g. user profiles of multiple tables), write `prepare_write_cmd`,
         repair it, then write `stress_cmd`.
+        Then, if `mgmt_flush_and_wait_for_compactions` is set, flush and wait for compactions to settle,
+        so they don't slow down the backup.
         """
         if not (size := self.params.get("mgmt_prepare_snapshot_size")):
             assert repaired_percent == 50, "Without `mgmt_prepare_snapshot_size` only 50% repaired data is supported"
             self.run_prepare_write_cmd()
             self._repair_written_data()
             self.run_and_verify_stress_in_threads(cs_cmds=self.params.get("stress_cmd"), stop_on_failure=True)
+            self._flush_and_wait_for_compactions()
             return
 
         num_of_rows = size * 1024 * 1024
@@ -211,6 +223,7 @@ class SingleCopyTest(ManagerTestFunctionsMixIn):
             self.log.info("Write %s%% of %s GB, left unrepaired", 100 - repaired_percent, size)
             _, cs_cmds = self.build_snapshot_preparer_cs_write_cmd(size, rows_range=(repaired_rows + 1, num_of_rows))
             self.run_and_verify_stress_in_threads(cs_cmds=cs_cmds, stop_on_failure=True)
+        self._flush_and_wait_for_compactions()
 
     def _start_cluster_backup(self, snapshot_tag: str, prefix: str) -> str:
         """Start cluster backup, the snapshot is created by Scylla. Return the task id."""
