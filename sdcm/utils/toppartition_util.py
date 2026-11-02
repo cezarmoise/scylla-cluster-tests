@@ -121,7 +121,8 @@ class NewApiTopPartitionCmd(TopPartitionCmd):
     def _filter_ks_cf(self) -> List[Tuple[str, str]]:
         filter_ks_cf = []
         try:
-            for _ in range(random.randint(1, len(self.ks_cf_list))):
+            # cap the count: thousands of tables overflow the ssh exec command line
+            for _ in range(random.randint(1, min(len(self.ks_cf_list), 100))):
                 keyspace, table_name = random.choice(self.ks_cf_list).split(".", maxsplit=1)
                 filter_ks_cf.append((keyspace, table_name))
         except IndexError as details:
