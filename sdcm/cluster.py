@@ -38,7 +38,7 @@ from typing import List, Optional, Dict, Union, Set, Iterable, ContextManager, A
 from datetime import datetime, timezone
 from textwrap import dedent
 from functools import cached_property, wraps, lru_cache, partial
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -5458,6 +5458,20 @@ class BaseCluster:
     def is_table_has_no_sstables(keyspace_name: str, node: BaseNode, table_name: str, **kwarg) -> bool:
         return not bool(node.sstable_folder_exists(keyspace_name, table_name, verbose=False))
 
+    @staticmethod
+    def _parse_cfstats_partitions(cfstats_output: str) -> dict[str, int]:
+        """Map 'ks.table' to its 'Number of partitions (estimate)' from plain 'nodetool cfstats' output."""
+        partitions = {}
+        keyspace = table = None
+        for line in map(str.strip, cfstats_output.splitlines()):
+            if match := re.match(r"Keyspace\s*:\s*(.+)$", line):
+                keyspace, table = match.group(1), None
+            elif match := re.match(r"Table:\s*(.+)$", line):
+                table = match.group(1)
+            elif keyspace and table and (match := re.match(r"Number of partitions \(estimate\):\s*(\d+)", line)):
+                partitions[f"{keyspace}.{table}"] = int(match.group(1))
+        return partitions
+
     def get_non_system_ks_cf_with_tablets_list(
         self,
         db_node,
@@ -5579,14 +5593,17 @@ class BaseCluster:
                         result.discard(table_name)
 
             if is_column_type and filter_empty_tables:
-                for i, table_name in enumerate(result.copy()):
-                    has_data = False
+                # one cfstats per keyspace: per-table calls take ~50 min at 5000 tables
+                partitions = {}
+                tables_per_keyspace = Counter(table_name.split(".", maxsplit=1)[0] for table_name in result)
+                for keyspace, tables_count in sorted(tables_per_keyspace.items()):
                     try:
-                        self.log.debug(f"{i}: {table_name}")
+                        self.log.debug(f"Getting partition estimates for {tables_count} tables of {keyspace} keyspace")
                         res = db_node.run_nodetool(
                             sub_cmd="cfstats",
-                            args=table_name,
-                            timeout=300,
+                            args=keyspace,
+                            # cfstats cost grows with tables count and shards: ~15 s for 2000 tables on 4 shards
+                            timeout=max(300, 0.1 * tables_count),
                             warning_event_on_exception=(
                                 Failure,
                                 UnexpectedExit,
@@ -5594,14 +5611,13 @@ class BaseCluster:
                             ),
                             publish_event=False,
                             retry=3,
+                            verbose=False,
                         )
-                        cf_stats = db_node._parse_cfstats(res.stdout)
-                        has_data = bool(cf_stats["Number of partitions (estimate)"])
+                        partitions.update(self._parse_cfstats_partitions(res.stdout))
                     except Exception as exc:  # noqa: BLE001
-                        self.log.warning(f"Failed to get rows from {table_name} table. Error: {exc}")
+                        self.log.warning(f"Failed to get rows from {keyspace} keyspace tables. Error: {exc}")
 
-                    if not has_data:
-                        result.discard(table_name)
+                result = {table_name for table_name in result if partitions.get(table_name)}
 
             if filter_func is not None:
                 self.get_keyspace_info.cache_clear()
