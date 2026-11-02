@@ -2560,7 +2560,9 @@ class NemesisRunner:
                 return _full_snapshot()
 
             selected_keyspace = random.choice(ks_with_few_tables)
-            tables = ",".join([k_c.split(".")[1] for k_c in ks_cf if k_c.startswith(f"{selected_keyspace}.")])
+            ks_tables = [k_c.split(".")[1] for k_c in ks_cf if k_c.startswith(f"{selected_keyspace}.")]
+            # cap the count: thousands of tables overflow the ssh exec command line
+            tables = ",".join(random.sample(ks_tables, k=min(len(ks_tables), 100)))
 
             if not tables:
                 # it's unexpected situation. We have system keyspaces with few tables, so the keyspaces should be found.
