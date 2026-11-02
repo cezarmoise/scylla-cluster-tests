@@ -1763,3 +1763,36 @@ def test_proposed_scylla_yaml_object_storage_endpoint_region(tmp_path):
     assert scylla_yaml.object_storage_endpoints == [
         {"name": "s3.eu-west-1.amazonaws.com", "port": 443, "https": True, "aws_region": "eu-west-1"},
     ]
+
+
+def test_get_any_ks_cf_list_calls_filter_func_once_per_table():
+    # system_schema.columns returns a row per column; t3 has a counter column;
+    # Alternator table names may contain "."
+    rows = [
+        SimpleNamespace(keyspace_name=ks, table_name=table, type=col_type)
+        for ks, table, col_type in [
+            ("ks", "t1", "text"),
+            ("ks", "t1", "int"),
+            ("ks", "t2", "text"),
+            ("ks", "t2", "int"),
+            ("ks", "t3", "text"),
+            ("ks", "t3", "counter"),
+            ("alternator_my.tbl", "my.tbl", "text"),
+        ]
+    ]
+    db_cluster = DummyScyllaCluster([])
+    db_cluster.cql_connection_patient = unittest.mock.MagicMock()
+    filter_func = unittest.mock.MagicMock(side_effect=lambda keyspace_name, node, table_name: table_name != "t1")
+
+    with unittest.mock.patch("sdcm.cluster.PageFetcher") as page_fetcher:
+        page_fetcher.return_value.request_all.return_value.all_data.return_value = rows
+        ks_cf = db_cluster.get_any_ks_cf_list(
+            db_node=None, filter_empty_tables=False, filter_out_table_with_counter=True, filter_func=filter_func
+        )
+
+    assert ks_cf == ["ks.t1"]
+    assert sorted((call.kwargs["keyspace_name"], call.kwargs["table_name"]) for call in filter_func.call_args_list) == [
+        ("alternator_my.tbl", "my.tbl"),
+        ("ks", "t1"),
+        ("ks", "t2"),
+    ]

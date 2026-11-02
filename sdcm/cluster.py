@@ -5530,6 +5530,8 @@ class BaseCluster:
 
         def execute_cmd(cql_session, entity_type):
             result = set()
+            # "ks.table" -> (ks, table): Alternator table names may contain "."
+            raw_names = {}
             counter_tables = set()
             is_column_type = entity_type == "column"
             column_names = regular_column_names
@@ -5565,15 +5567,16 @@ class BaseCluster:
                 ):
                     continue
 
-                if filter_func is not None:
-                    if filter_func(
-                        keyspace_name=getattr(row, column_names[0]),
-                        node=db_node,
-                        table_name=getattr(row, column_names[1]),
-                    ):
-                        continue
-
                 result.add(table_name)
+                raw_names[table_name] = (getattr(row, column_names[0]), getattr(row, column_names[1]))
+
+            result -= counter_tables
+            if filter_func is not None:
+                # once per table: system_schema.columns has a row per column
+                for table_name in result.copy():
+                    keyspace_name, cf_name = raw_names[table_name]
+                    if filter_func(keyspace_name=keyspace_name, node=db_node, table_name=cf_name):
+                        result.discard(table_name)
 
             if is_column_type and filter_empty_tables:
                 for i, table_name in enumerate(result.copy()):
@@ -5602,7 +5605,6 @@ class BaseCluster:
 
             if filter_func is not None:
                 self.get_keyspace_info.cache_clear()
-            result = result - counter_tables
             return result
 
         with self.cql_connection_patient(db_node, connect_timeout=600) as session:
