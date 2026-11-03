@@ -2446,7 +2446,21 @@ class NemesisRunner:
                 return ComparableScyllaVersion(self.target_node.scylla_version) >= "6.3.0-dev"
 
         def get_ks_cf():
-            filter_func = self.cluster.is_table_has_no_sstables if is_virtual_tables_get_snapshot() else None
+            filter_func = None
+            if is_virtual_tables_get_snapshot():
+                # one SSH call for all tables, instead of is_table_has_no_sstables per table
+                table_dirs = self.target_node.remoter.run(
+                    "find /var/lib/scylla/data -mindepth 2 -maxdepth 2 -type d", ignore_status=True, verbose=False
+                ).stdout.split()
+                # table folders are named <table>-<uuid>
+                tables_with_dir = {
+                    (keyspace, table_dir.rsplit("-", 1)[0])
+                    for keyspace, table_dir in (path.rsplit("/", 2)[-2:] for path in table_dirs)
+                }
+
+                def filter_func(keyspace_name, table_name, **_):
+                    return (keyspace_name, table_name) not in tables_with_dir
+
             ks_cf = self.cluster.get_any_ks_cf_list(
                 db_node=self.target_node, filter_empty_tables=False, filter_func=filter_func
             )

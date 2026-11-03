@@ -113,3 +113,20 @@ def test_validate_snapshot_cf_snapshot_skips_table_listing():
     snapshot_content = [SnapshotDetails("ks", "t1"), SnapshotDetails("ks", "t2")]
     NemesisRunner._validate_snapshot(runner, nodetool_cmd="snapshot ks -cf t1,t2", snapshot_content=snapshot_content)
     runner.cluster.get_any_ks_cf_list.assert_not_called()
+
+
+def test_validate_snapshot_lists_table_folders_with_one_ssh_call():
+    """Tables without a data folder are filtered out using one `find` for all tables, not one per table."""
+    runner = _make_runner(scylla_version="2026.2.3", ks_cf=["ks.t1"])
+    runner.target_node.is_enterprise = True
+    runner.target_node.remoter.run.return_value.stdout = (
+        "/var/lib/scylla/data/ks/t1-0123456789abcdef0123456789abcdef\n"
+        "/var/lib/scylla/data/alternator_my-tbl/my-tbl-0123456789abcdef0123456789abcdef\n"
+    )
+    NemesisRunner._validate_snapshot(runner, nodetool_cmd="snapshot", snapshot_content=[SnapshotDetails("ks", "t1")])
+
+    runner.target_node.remoter.run.assert_called_once()
+    filter_func = runner.cluster.get_any_ks_cf_list.call_args.kwargs["filter_func"]
+    assert not filter_func(keyspace_name="ks", node=runner.target_node, table_name="t1")
+    assert not filter_func(keyspace_name="alternator_my-tbl", node=runner.target_node, table_name="my-tbl")
+    assert filter_func(keyspace_name="ks", node=runner.target_node, table_name="t2")
