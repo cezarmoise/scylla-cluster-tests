@@ -42,6 +42,12 @@ TASK_TIMEOUT = 200000
 TABLE_PROFILE_TEMPLATE = "data_dir/cs_single_copy_table.yaml"
 
 
+def table_profile(table_name: str) -> str:
+    """C-S user profile of a `TABLE_PROFILE_TEMPLATE` table."""
+    template = string.Template(Path(sct_abs_path(TABLE_PROFILE_TEMPLATE)).read_text(encoding="utf-8"))
+    return template.substitute(table_name=table_name)
+
+
 class SingleCopyTest(ManagerTestFunctionsMixIn):
     """Single copy (tablet-aware, deduplicated) backup and restore, driven via Scylla REST API only.
 
@@ -82,14 +88,13 @@ class SingleCopyTest(ManagerTestFunctionsMixIn):
         """C-S user profiles of `user_profile_table_count` tables. Empty for one table, written as `standard1`."""
         if (table_count := self.params.get("user_profile_table_count")) == 1:
             return []
-        template = string.Template(Path(sct_abs_path(TABLE_PROFILE_TEMPLATE)).read_text(encoding="utf-8"))
         profiles = []
         for i in range(table_count):
             # stress thread uploads a profile from /tmp to the same path on the loader, see `get_profile_content`
             with tempfile.NamedTemporaryFile(
                 mode="w", dir="/tmp", prefix=f"cs_single_copy_table{i}_", suffix=".yaml", delete=False, encoding="utf-8"
             ) as profile:
-                profile.write(template.substitute(table_name=f"table{i}"))
+                profile.write(table_profile(f"table{i}"))
             profiles.append(profile.name)
         return profiles
 
@@ -347,9 +352,24 @@ class SingleCopyTest(ManagerTestFunctionsMixIn):
             }
         )
 
+    def _create_profile_tables(self) -> None:
+        """Create the snapshot tables from `TABLE_PROFILE_TEMPLATE`, as written by `user_profile_table_count` > 1."""
+        with self.db_cluster.cql_connection_patient(self.api_node) as session:
+            for keyspace, tables in self.snapshot.ks_tables_map.items():
+                for table in tables:
+                    profile = yaml.safe_load(table_profile(table))
+                    assert profile["keyspace"] == keyspace, f"Profile keyspace {profile['keyspace']} is not {keyspace}"
+                    session.execute(profile["keyspace_definition"])
+                    session.execute(profile["table_definition"])
+
     def _create_snapshot_schema(self) -> None:
-        """Restore requires existing tables and the backup holds no schema: let c-s create it, then truncate."""
-        assert "num_of_rows" in self.snapshot.dataset, "Schema creation supports only c-s `standard1` snapshots"
+        """Restore requires existing tables and the backup holds no schema.
+
+        `standard1` snapshots: let c-s create it, then truncate. User profile snapshots: create the tables with CQL.
+        """
+        if "num_of_rows" not in self.snapshot.dataset:
+            self._create_profile_tables()
+            return
         stress_cmd = self._snapshot_cs_cmd(cl="QUORUM", num_of_rows=1).replace(
             "cassandra-stress read", "cassandra-stress write", 1
         )
