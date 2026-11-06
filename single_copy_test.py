@@ -17,6 +17,7 @@ import json
 import string
 import tempfile
 import textwrap
+import threading
 import time
 from functools import cached_property
 from pathlib import Path
@@ -117,19 +118,48 @@ class SingleCopyTest(ManagerTestFunctionsMixIn):
         self.log.debug("Task %s status: %s", task_id, status)
         return status
 
+    def _wait_for_tasks(self, tasks: dict, timeout: int = TASK_TIMEOUT, step: int = 30) -> dict[str, dict]:
+        """Wait for the tasks (task id -> node, None for `api_node`) to finish, return their final statuses.
+
+        All tasks are polled together, as Scylla forgets a finished task after `user_task_ttl_in_seconds` (1h).
+        """
+        statuses = {}
+        task_lost = threading.Event()
+
+        def _all_finished():
+            for task_id, node in tasks.items():
+                if task_id in statuses:
+                    continue
+                try:
+                    status = self._get_task_status(task_id, node=node)
+                except AssertionError as error:
+                    if "not found" in str(error):
+                        task_lost.set()  # a lost task never shows up again, stop waiting and raise the error
+                    raise
+                if status["state"] in ("done", "failed"):
+                    statuses[task_id] = status
+            return len(statuses) == len(tasks)
+
+        wait.wait_for(
+            _all_finished,
+            step=step,
+            timeout=timeout,
+            stop_event=task_lost,
+            text=f"Waiting for Scylla tasks {list(tasks)}",
+        )
+        return statuses
+
+    def _assert_tasks_done(self, tasks: dict, timeout: int = TASK_TIMEOUT) -> dict[str, dict]:
+        statuses = self._wait_for_tasks(tasks, timeout=timeout)
+        failed = {task_id: status.get("error") for task_id, status in statuses.items() if status["state"] != "done"}
+        assert not failed, f"Tasks failed: {failed}"
+        return statuses
+
     def _wait_for_task(self, task_id: str, node=None, timeout: int = TASK_TIMEOUT, step: int = 30) -> dict:
-        """Wait for the task to finish, return its final status."""
-
-        def _finished_status():
-            status = self._get_task_status(task_id, node=node)
-            return status if status["state"] in ("done", "failed") else None
-
-        return wait.wait_for(_finished_status, step=step, timeout=timeout, text=f"Waiting for Scylla task {task_id}")
+        return self._wait_for_tasks({task_id: node}, timeout=timeout, step=step)[task_id]
 
     def _assert_task_done(self, task_id: str, node=None, timeout: int = TASK_TIMEOUT) -> dict:
-        status = self._wait_for_task(task_id, node=node, timeout=timeout)
-        assert status["state"] == "done", f"Task {task_id} failed: {status.get('error')}"
-        return status
+        return self._assert_tasks_done({task_id: node}, timeout=timeout)[task_id]
 
     def _report_error(self, message: str) -> None:
         """Publish an error event: fails the test without stopping it, so the following checks still run."""
@@ -419,13 +449,17 @@ class SingleCopyTest(ManagerTestFunctionsMixIn):
         ]
 
     def _restore(self) -> int:
-        """Restore every snapshot table in parallel and wait for all of them. Return duration in seconds."""
+        """Start the restore of every snapshot table and wait for all of them. Return duration in seconds.
+
+        Scylla runs the restores one table at a time, in no particular order.
+        """
         with ExecutionTimer() as timer:
-            for task_id in self._start_restore_all_tables():
-                status = self._assert_task_done(task_id, timeout=self.snapshot.exp_timeout)
-                assert 0 < status["progress_completed"] == status["progress_total"], (
-                    f"Restore task {task_id} did not restore everything: {status}"
-                )
+            task_ids = self._start_restore_all_tables()
+            statuses = self._assert_tasks_done(dict.fromkeys(task_ids), timeout=self.snapshot.exp_timeout)
+        for task_id, status in statuses.items():
+            assert 0 < status["progress_completed"] == status["progress_total"], (
+                f"Restore task {task_id} did not restore everything: {status}"
+            )
         duration = int(timer.duration.total_seconds())
         self.log.info("Restore took %s seconds", duration)
         return duration
@@ -590,8 +624,7 @@ class SingleCopyTest(ManagerTestFunctionsMixIn):
                 for keyspace in self.keyspaces
                 for table in self._get_tables(keyspace)
             ]
-            for node, task_id in backup_tasks:
-                self._assert_task_done(task_id, node=node)
+            self._assert_tasks_done({task_id: node for node, task_id in backup_tasks})
         self._send_snapshot_details(snapshot_tag, base_prefix, int(timer.duration.total_seconds()), node_ids=host_ids)
 
     def test_restore(self):
@@ -637,8 +670,7 @@ class SingleCopyTest(ManagerTestFunctionsMixIn):
         self._create_snapshot_schema()
         task_ids = self._start_restore_all_tables()
         self._abort_task_in_progress(task_ids[0])
-        for task_id in task_ids[1:]:
-            self._wait_for_task(task_id, timeout=self.snapshot.exp_timeout)
+        self._wait_for_tasks(dict.fromkeys(task_ids[1:]), timeout=self.snapshot.exp_timeout)
 
         restore_time = self._restore()
         repair_time = self._post_restore_repair()
