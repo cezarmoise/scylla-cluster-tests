@@ -4,7 +4,7 @@
 
 Scylla Manager server and agent: versions, repos and backup/restore settings.
 
-**27 options.**
+**29 options.**
 
 
 <a id="backup_bucket_backend"></a>
@@ -126,6 +126,28 @@ Flush and wait for compactions to finish after writing the backup dataset, so th
 **default:** False
 
 **type:** bool
+
+
+<a id="mgmt_frequent_backup_cycles"></a>
+
+## **mgmt_frequent_backup_cycles** / SCT_MGMT_FREQUENT_BACKUP_CYCLES
+
+Number of [`mgmt_frequent_backup_chunk_size`](#mgmt_frequent_backup_chunk_size) GB chunks of new data written by the Scylla API frequent backups test, each followed by incremental repair and a backup
+
+**default:** 5
+
+**type:** int
+
+
+<a id="mgmt_frequent_backup_chunk_size"></a>
+
+## **mgmt_frequent_backup_chunk_size** / SCT_MGMT_FREQUENT_BACKUP_CHUNK_SIZE
+
+GB of new data written before each backup of the Scylla API frequent backups test
+
+**default:** 100
+
+**type:** int
 
 
 <a id="mgmt_nodetool_refresh_flags"></a>

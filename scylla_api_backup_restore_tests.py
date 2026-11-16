@@ -28,6 +28,7 @@ import yaml
 from sdcm import sct_abs_path, wait
 from sdcm.argus_results import (
     ManagerRestoreBenchmarkResult,
+    ScyllaApiFrequentBackupResult,
     send_manager_benchmark_results_to_argus,
     send_manager_snapshot_details_to_argus,
 )
@@ -89,9 +90,13 @@ class ScyllaApiBackupRestoreTests(ManagerTestFunctionsMixIn):
 
     @cached_property
     def rows_per_table(self) -> int:
-        """`mgmt_prepare_snapshot_size` GB of 1 KB rows, split evenly between `user_profile_table_count` tables."""
+        """Rows of `mgmt_prepare_snapshot_size` GB in each table."""
         size = self.params.get("mgmt_prepare_snapshot_size")
         assert size, "Backup tests require `mgmt_prepare_snapshot_size`"
+        return self._gb_to_rows_per_table(size)
+
+    def _gb_to_rows_per_table(self, size: int) -> int:
+        """`size` GB of 1 KB rows, split evenly between `user_profile_table_count` tables."""
         return size * 1024 * 1024 // self.params.get("user_profile_table_count")
 
     def _table_profile(self, table: str) -> str:
@@ -169,8 +174,8 @@ class ScyllaApiBackupRestoreTests(ManagerTestFunctionsMixIn):
         )
         return statuses
 
-    def _assert_tasks_done(self, tasks: dict, timeout: int = TASK_TIMEOUT) -> dict[str, dict]:
-        statuses = self._wait_for_tasks(tasks, timeout=timeout)
+    def _assert_tasks_done(self, tasks: dict, timeout: int = TASK_TIMEOUT, step: int = 30) -> dict[str, dict]:
+        statuses = self._wait_for_tasks(tasks, timeout=timeout, step=step)
         failed = {task_id: status.get("error") for task_id, status in statuses.items() if status["state"] != "done"}
         assert not failed, f"Tasks failed: {failed}"
         return statuses
@@ -178,8 +183,8 @@ class ScyllaApiBackupRestoreTests(ManagerTestFunctionsMixIn):
     def _wait_for_task(self, task_id: str, node=None, timeout: int = TASK_TIMEOUT, step: int = 30) -> dict:
         return self._wait_for_tasks({task_id: node}, timeout=timeout, step=step)[task_id]
 
-    def _assert_task_done(self, task_id: str, node=None, timeout: int = TASK_TIMEOUT) -> dict:
-        return self._assert_tasks_done({task_id: node}, timeout=timeout)[task_id]
+    def _assert_task_done(self, task_id: str, node=None, timeout: int = TASK_TIMEOUT, step: int = 30) -> dict:
+        return self._assert_tasks_done({task_id: node}, timeout=timeout, step=step)[task_id]
 
     def _report_error(self, message: str) -> None:
         """Publish an error event: fails the test without stopping it, so the following checks still run."""
@@ -377,12 +382,15 @@ class ScyllaApiBackupRestoreTests(ManagerTestFunctionsMixIn):
         self.log.info("Cluster backup task %s started to %s/%s", task_id, self.bucket, prefix)
         return task_id
 
-    def _cluster_backup(self, name: str = "backup") -> tuple[str, str, int]:
-        """Run cluster backup to a new prefix. Return snapshot tag, prefix and duration in seconds."""
+    def _cluster_backup(self, name: str = "backup", prefix: str | None = None, step: int = 30) -> tuple[str, str, int]:
+        """Run cluster backup to `prefix`, a new one by default, poll the task every `step` seconds.
+
+        Return snapshot tag, prefix and duration in seconds.
+        """
         snapshot_tag = f"sct_scylla_api_{name}_{int(time.time())}"
-        prefix = self._new_prefix(name)
+        prefix = prefix or self._new_prefix(name)
         with ExecutionTimer() as timer:
-            self._assert_task_done(self._start_cluster_backup(snapshot_tag, prefix))
+            self._assert_task_done(self._start_cluster_backup(snapshot_tag, prefix), step=step)
         duration = int(timer.duration.total_seconds())
         self.log.info("Cluster backup took %s seconds", duration)
         return snapshot_tag, prefix, duration
@@ -467,12 +475,22 @@ class ScyllaApiBackupRestoreTests(ManagerTestFunctionsMixIn):
         for _thread in stress_queue:
             assert self.verify_stress_thread(_thread), "Stress thread verification failed"
 
-    def _log_snapshot_entry(self, tag: str, prefix: str, size: int) -> SnapshotData:
-        """Log the snapshot entry to add to `defaults/manager_restore_benchmark_snapshots.yaml`, return its data."""
+    def _log_snapshot_entry(
+        self, tag: str, prefix: str, size: int | None, num_of_rows: int | None = None
+    ) -> SnapshotData:
+        """Log the snapshot entry to add to `defaults/manager_restore_benchmark_snapshots.yaml`, return its data.
+
+        `size` on disk of all replicas, None if unknown. `num_of_rows` per table, `rows_per_table` by default.
+        """
+        num_of_rows = num_of_rows or self.rows_per_table
         tables = {keyspace: self._get_tables(keyspace) for keyspace in self.keyspaces}
-        # dataset size, single replica
-        dataset_size = size // self._get_rf(self.keyspaces[0])
-        table_size = dataset_size // sum(len(ks_tables) for ks_tables in tables.values())
+        table_count = sum(len(ks_tables) for ks_tables in tables.values())
+        # dataset size, single replica; the size written (1 KB rows) if the size on disk is unknown
+        if size is None:
+            dataset_size = num_of_rows * table_count // (1024 * 1024)
+        else:
+            dataset_size = size // self._get_rf(self.keyspaces[0])
+        table_size = dataset_size // table_count
         entry = {
             "tag": tag,
             "locations": [self.location],
@@ -483,7 +501,7 @@ class ScyllaApiBackupRestoreTests(ManagerTestFunctionsMixIn):
             "prohibit_verification_read": False,
             "dataset": {
                 "schema": {ks: [{table: table_size} for table in ks_tables] for ks, ks_tables in tables.items()},
-                "num_of_rows": self.rows_per_table,  # per table, read by the verification
+                "num_of_rows": num_of_rows,  # per table, read by the verification
             },
         }
         name = f"scylla_api_{dataset_size}gb_{prefix.rsplit('/', 1)[-1]}_{int(time.time())}"
@@ -505,18 +523,21 @@ class ScyllaApiBackupRestoreTests(ManagerTestFunctionsMixIn):
             prefix=prefix,
         )
 
-    def _send_snapshot_details(self, tag: str, prefix: str, duration: int) -> SnapshotData:
+    def _send_snapshot_details(
+        self, tag: str, prefix: str, duration: int, num_of_rows: int | None = None
+    ) -> SnapshotData:
         """Send the backup details to Argus and log its snapshot entry. Return the snapshot data."""
         size = self.get_keyspaces_disk_size_gb(self.keyspaces)
-        snapshot = self._log_snapshot_entry(tag, prefix, size)
+        snapshot = self._log_snapshot_entry(tag, prefix, size, num_of_rows)
         snapshot_details = {
             "tag": tag,
-            "size": size,
             "duration": duration,
             "locations": f"{self.location}/{prefix}",
             "ks_name": ",".join(self.keyspaces),
             "scylla_version": self.params.get_version_based_on_conf()[0],
         }
+        if size is not None:
+            snapshot_details["size"] = size
         if (size_on_bucket := self._get_prefix_size_on_bucket(prefix)) is not None:
             snapshot_details["size_on_bucket"] = size_on_bucket
         self.log.info("Send snapshot details to Argus: %s", snapshot_details)
@@ -525,21 +546,18 @@ class ScyllaApiBackupRestoreTests(ManagerTestFunctionsMixIn):
         )
         return snapshot
 
-    def _post_restore_repair(self) -> int:
-        """Run incremental repair after restore. Return duration in seconds."""
-        self.log.info("Run post restore incremental repair")
+    def _timed_repair(self) -> int:
+        """Run incremental repair. Return duration in seconds."""
+        self.log.info("Run incremental repair")
         with ExecutionTimer() as timer:
             self._repair()
         return int(timer.duration.total_seconds())
 
     def _send_restore_results(self, restore_time: int, repair_time: int, label: str) -> None:
-        results = {
-            "restore time": restore_time,
-            "repair time": repair_time,
-            "total": restore_time + repair_time,
+        results = {"restore time": restore_time, "repair time": repair_time, "total": restore_time + repair_time}
+        if (size := self.get_keyspaces_disk_size_gb(self.keyspaces)) is not None:
             # dataset size, single replica
-            "size": self.get_keyspaces_disk_size_gb(self.keyspaces) // self._get_rf(self.keyspaces[0]),
-        }
+            results["size"] = size // self._get_rf(self.keyspaces[0])
         self.log.info("Send restore results to Argus: %s", results)
         send_manager_benchmark_results_to_argus(
             argus_client=self.test_config.argus_client(),
@@ -548,10 +566,35 @@ class ScyllaApiBackupRestoreTests(ManagerTestFunctionsMixIn):
             row_name=label,
         )
 
+    def _backup_cycle(self, name: str, prefix: str) -> tuple[str, int]:
+        """Incremental repair, flush and wait for compactions, backup to `prefix`, clear the snapshot.
+
+        Send repair time, backup time and size uploaded to Argus. Return snapshot tag and backup duration in seconds.
+        """
+        size_before = self._get_prefix_size_on_bucket(prefix)
+        repair_time = self._timed_repair()
+        self._assert_tablets_repaired()
+        self._flush_and_wait_for_compactions()
+        # short poll step, backups to an existing prefix may take only a few minutes
+        tag, _, backup_time = self._cluster_backup(name, prefix=prefix, step=5)
+        # the snapshot pins sstables that compaction replaces later, free the disk
+        self._clear_snapshots()
+        results = {"repair time": repair_time, "backup time": backup_time, "total": repair_time + backup_time}
+        if (size_after := self._get_prefix_size_on_bucket(prefix)) is not None:
+            results |= {"uploaded": round(size_after - size_before, 3), "size on bucket": size_after}
+        self.log.info("Send backup cycle %s results to Argus: %s", name, results)
+        send_manager_benchmark_results_to_argus(
+            argus_client=self.test_config.argus_client(),
+            result=results,
+            result_table=ScyllaApiFrequentBackupResult(),
+            row_name=name,
+        )
+        return tag, backup_time
+
     def _restore_and_verify(self, label: str) -> None:
         """Restore all tables, run incremental repair, send results to Argus, read all data from each node."""
         restore_time = self._restore()
-        repair_time = self._post_restore_repair()
+        repair_time = self._timed_repair()
         self._send_restore_results(restore_time, repair_time, label=label)
         self._verify_data_on_each_node()
 
@@ -608,3 +651,32 @@ class ScyllaApiBackupRestoreTests(ManagerTestFunctionsMixIn):
         self._abort_task_in_progress(task_ids[0])
         self._wait_for_tasks(dict.fromkeys(task_ids[1:]), timeout=self.snapshot.exp_timeout)
         self._restore_and_verify(label="after abort")
+
+    def test_frequent_backups(self):
+        """Single copy backups to one prefix after each chunk of new data, each after incremental repair.
+
+        A backup to a prefix uploads only sstables not in it yet: new data, compaction output, and sstables
+        marked repaired since the previous backup (incremental repair gives them a new sstable id).
+
+        Steps:
+        1. Write `mgmt_prepare_snapshot_size` GB, unrepaired (`mgmt_backup_repaired_percent: 0`).
+        2. Backup cycle: incremental repair, flush and wait for compactions (`mgmt_flush_and_wait_for_compactions`),
+           backup to the prefix. Send repair time, backup time and size uploaded to Argus.
+        3. `mgmt_frequent_backup_cycles` times: write `mgmt_frequent_backup_chunk_size` GB of new rows, backup cycle.
+        4. Log the snapshot entry of the last backup, for `test_restore`.
+        """
+        self._write_data()
+        prefix = self._new_prefix("frequent")
+        self._backup_cycle("baseline", prefix)
+
+        chunk_size = self.params.get("mgmt_frequent_backup_chunk_size")
+        chunk_rows = self._gb_to_rows_per_table(chunk_size)
+        last_row = self.rows_per_table
+        for cycle in range(1, self.params.get("mgmt_frequent_backup_cycles") + 1):
+            self.log.info("Write chunk %s of %s GB", cycle, chunk_size)
+            self.run_and_verify_stress_in_threads(
+                cs_cmds=self._cs_write_cmds(last_row + 1, last_row + chunk_rows), stop_on_failure=True
+            )
+            last_row += chunk_rows
+            tag, backup_time = self._backup_cycle(f"cycle_{cycle}", prefix)
+        self._send_snapshot_details(tag, prefix, backup_time, num_of_rows=last_row)

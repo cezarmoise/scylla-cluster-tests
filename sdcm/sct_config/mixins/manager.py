@@ -70,6 +70,15 @@ class ManagerConfigMixin(BaseModel):
         description="Flush and wait for compactions to finish after writing the backup dataset, "
         "so they don't slow down the backup",
     )
+    mgmt_frequent_backup_cycles: int = SctField(
+        ge=1,
+        description="Number of `mgmt_frequent_backup_chunk_size` GB chunks of new data written by the Scylla API "
+        "frequent backups test, each followed by incremental repair and a backup",
+    )
+    mgmt_frequent_backup_chunk_size: int = SctField(
+        ge=1,
+        description="GB of new data written before each backup of the Scylla API frequent backups test",
+    )
     mgmt_nodetool_refresh_flags: String = SctField(
         description="Nodetool refresh extra options like --load-and-stream or --primary-replica-only",
     )

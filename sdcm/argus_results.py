@@ -193,6 +193,19 @@ class ManagerSnapshotDetails(StaticGenericResultTable):
         ]
 
 
+class ScyllaApiFrequentBackupResult(StaticGenericResultTable):
+    class Meta:
+        name = "Frequent backup cycles"
+        description = "Incremental repair and cluster backup to the same prefix, per backup cycle"
+        Columns = [
+            ColumnMetadata(name="repair time", unit="s", type=ResultType.DURATION, higher_is_better=False),
+            ColumnMetadata(name="backup time", unit="s", type=ResultType.DURATION, higher_is_better=False),
+            ColumnMetadata(name="total", unit="s", type=ResultType.DURATION, higher_is_better=False),
+            ColumnMetadata(name="uploaded", unit="GiB", type=ResultType.FLOAT, higher_is_better=False),
+            ColumnMetadata(name="size on bucket", unit="GiB", type=ResultType.FLOAT, higher_is_better=False),
+        ]
+
+
 class MigratorBenchmarkResult(StaticGenericResultTable):
     class Meta:
         name = "spark-migrator - benchmark"
