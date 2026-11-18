@@ -51,6 +51,13 @@ class DbLogReader(Process):
         "] stream_session - [Stream ",
         "] storage_proxy - Exception when communicating with",
     ]
+    # Logged on every tablet repair and topology barrier. Excluded at INFO only, to keep the warnings and errors
+    EXCLUDE_INFO_FROM_LOGGING = [
+        "] repair - ",
+        "] raft_topology - topology cmd rpc barrier_and_drain",
+        "raft_topology_cmd::barrier_and_drain",
+        "] storage_proxy - update_fence_version",
+    ]
 
     BUILD_ID_REGEX = re.compile(r"build-id\s(.*?)\sstarting\s\.\.\.")
 
@@ -111,6 +118,12 @@ class DbLogReader(Process):
 
         return False
 
+    def _is_excluded_from_logging(self, line: str) -> bool:
+        if any(pattern in line for pattern in self.EXCLUDE_FROM_LOGGING):
+            return True
+        # syslog-ng and vector write the level as "!INFO |"
+        return "!INFO |" in line and any(pattern in line for pattern in self.EXCLUDE_INFO_FROM_LOGGING)
+
     def _read_and_publish_events(self) -> None:  # noqa: PLR0912
         """Search for all known patterns listed in `sdcm.sct_events.database.SYSTEM_ERROR_EVENTS'."""
         backtraces = []
@@ -143,10 +156,7 @@ class DbLogReader(Process):
 
                     if self._log_lines:
                         line = line.strip()  # noqa: PLW2901
-                        for pattern in self.EXCLUDE_FROM_LOGGING:
-                            if pattern in line:
-                                break
-                        else:
+                        if not self._is_excluded_from_logging(line):
                             LOGGER.debug(line)
 
                     if json_log:
