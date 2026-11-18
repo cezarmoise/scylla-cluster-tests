@@ -326,8 +326,6 @@ class FileLog(CommandLog):
                 if except_patterns in full_path:
                     continue
                 if full_path.endswith(search_pattern) or fnmatch.fnmatch(full_path, f"*{search_pattern}"):
-                    if os.path.islink(full_path):
-                        full_path = os.path.realpath(full_path)
                     local_files.append(full_path)
         return local_files
 

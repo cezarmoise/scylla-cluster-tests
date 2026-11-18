@@ -670,3 +670,22 @@ def test_collect_node_logs_checks_ssh_of_a_dead_node_once(tmp_path):
         collector.collect_node_logs()
 
     node.remoter.is_up.assert_called_once()
+
+
+def test_scylla_system_log_found_locally_is_not_downloaded_again(tmp_path):
+    """The node's system.log links to the log shipper's messages.log: a copy under another name was downloaded again."""
+    shipped_log = tmp_path / "hosts" / "db-node-1" / "messages.log"
+    shipped_log.parent.mkdir(parents=True)
+    shipped_log.write_text("2026-10-27T11:33:43.447 db-node-1  !INFO | scylla[16038]  [shard 0:main] init - starting\n")
+    node_logdir = tmp_path / "db-cluster" / "db-node-1"
+    node_logdir.mkdir(parents=True)
+    (node_logdir / "system.log").symlink_to(shipped_log)
+    node = SimpleNamespace(name="db-node-1", remoter=Mock())
+    local_dst = tmp_path / "collected"
+
+    entity = next(e for e in ScyllaLogCollector.log_entities if e.name == "system.log")
+    entity.collect(node, str(local_dst), remote_dst="/tmp/collected", local_search_path=str(tmp_path / "db-cluster"))
+
+    assert [p.name for p in local_dst.iterdir()] == ["system.log"]
+    assert (local_dst / "system.log").read_text() == shipped_log.read_text()
+    assert not node.remoter.mock_calls
